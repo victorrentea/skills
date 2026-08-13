@@ -1,7 +1,6 @@
 {
   "name": "victor-skills",
   "description": "Victor Rentea's public Claude Code skills: design grilling, DB guardrails, JMeter load tests, tooltip styling, self-reasoning audit, Scribd capture.",
-  "version": "1.0.0",
   "author": {
     "name": "Victor Rentea",
     "url": "https://victorrentea.ro"
