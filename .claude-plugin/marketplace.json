@@ -1,0 +1,19 @@
+{
+  "name": "victor-skills",
+  "owner": {
+    "name": "Victor Rentea",
+    "url": "https://victorrentea.ro"
+  },
+  "metadata": {
+    "description": "Victor Rentea's public Claude Code skills",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "victor-skills",
+      "description": "Design grilling, DB guardrails, JMeter load tests, tooltips, self-reasoning audit and Scribd capture.",
+      "version": "1.0.0",
+      "source": "./"
+    }
+  ]
+}
