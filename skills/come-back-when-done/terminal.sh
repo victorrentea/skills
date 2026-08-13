@@ -11,8 +11,15 @@
 # backing scale factor and the terminal app by $TERM_PROGRAM — so there are no
 # machine-specific coordinates or app names anywhere in here.
 #
+# The window driven is THIS session's own window, never merely the frontmost one:
+# with several terminal windows open (and Victor runs several Claude sessions at
+# once), "window 1" is whichever window happens to be in front, so the naive
+# version yanked a colleague window off the screen. On Apple Terminal the window
+# is resolved by tty and addressed by its stable window id.
+#
 # Overrides, if the guesses are ever wrong:
 #   CBWD_TERMINAL_APP   process name to drive (e.g. "Terminal", "iTerm2", "Ghostty")
+#   CBWD_WINDOW_ID      Apple Terminal window id to drive, skipping tty resolution
 #   CBWD_SOUND          path to an .aiff/.wav to play instead of the default
 set -euo pipefail
 
@@ -46,8 +53,60 @@ resolve_app() {
 APP="$(resolve_app)"
 [ -n "$APP" ] || die "Cannot tell which terminal app to drive. Set CBWD_TERMINAL_APP."
 
-# ── window geometry via System Events (works for any app, needs Accessibility) ─
-win_get() {
+# ── which window is OURS ──────────────────────────────────────────────────────
+# The tty of this process is useless: the tool that runs these commands has none,
+# and wrappers that allocate an inner pty (kiro-cli-term, tmux, script) hide the
+# real one anyway. So walk up the process tree and keep the LAST tty seen — the
+# outermost one, on the process the terminal itself started, which is the tty the
+# terminal reports for that tab.
+outer_tty() {
+  local p="$$" pp tt out=''
+  for _ in $(seq 20); do
+    read -r pp tt <<<"$(ps -o ppid=,tty= -p "$p" 2>/dev/null)"
+    if [ -z "${pp:-}" ]; then break; fi
+    if [ -n "${tt:-}" ] && [ "$tt" != '??' ]; then out="$tt"; fi
+    if [ "$pp" -le 1 ] 2>/dev/null; then break; fi
+    p="$pp"
+  done
+  [ -n "$out" ] && printf '/dev/%s' "$out"
+}
+
+# Apple Terminal exposes a stable per-window id and can move windows itself, so
+# on Terminal we need neither System Events nor Accessibility.
+TERM_WIN_ID=''
+if [ "$APP" = 'Terminal' ]; then
+  if [ -n "${CBWD_WINDOW_ID:-}" ]; then
+    TERM_WIN_ID="$CBWD_WINDOW_ID"
+  else
+    _tty="$(outer_tty || true)"
+    if [ -n "$_tty" ]; then
+      TERM_WIN_ID="$(osascript - "$_tty" <<'JXA' 2>/dev/null || true
+on run argv
+  tell application "Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (tty of t) is (item 1 of argv) then return (id of w) as text
+      end repeat
+    end repeat
+  end tell
+  return ""
+end run
+JXA
+)"
+    fi
+  fi
+fi
+
+# ── window geometry ───────────────────────────────────────────────────────────
+# Terminal's "bounds" is {left, top, right, bottom} in the same top-left-origin
+# screen space screens.sh already reports, so no conversion is needed.
+win_get() { # -> x y w h
+  if [ -n "$TERM_WIN_ID" ]; then
+    osascript -e "tell application \"Terminal\" to get bounds of window id $TERM_WIN_ID" 2>/dev/null \
+      | awk -F', *' '{print $1, $2, $3 - $1, $4 - $2}' \
+      | grep . || die "Could not read Terminal window id $TERM_WIN_ID — was it closed?"
+    return
+  fi
   osascript -e "tell application \"System Events\" to tell process \"$APP\"
     set p to position of window 1
     set s to size of window 1
@@ -56,10 +115,26 @@ win_get() {
 }
 
 win_set() { # x y w h
+  if [ -n "$TERM_WIN_ID" ]; then
+    osascript -e "tell application \"Terminal\" to set bounds of window id $TERM_WIN_ID to {$1, $2, $(( $1 + $3 )), $(( $2 + $4 ))}" \
+      >/dev/null 2>&1 || die "Could not move Terminal window id $TERM_WIN_ID — was it closed?"
+    return
+  fi
   osascript -e "tell application \"System Events\" to tell process \"$APP\"
     set position of window 1 to {$1, $2}
     set size of window 1 to {$3, $4}
   end tell" >/dev/null 2>&1 || die "Could not move the window of \"$APP\" (Accessibility permission?)"
+}
+
+raise() {
+  if [ -n "$TERM_WIN_ID" ]; then
+    osascript -e "tell application \"Terminal\"
+      activate
+      set frontmost of window id $TERM_WIN_ID to true
+    end tell" >/dev/null 2>&1 && return 0
+  fi
+  osascript -e "tell application \"$APP\" to activate" >/dev/null 2>&1 \
+    || osascript -e "tell application \"System Events\" to set frontmost of process \"$APP\" to true" >/dev/null 2>&1 || true
 }
 
 screens() { bash "$HERE/screens.sh"; }
@@ -90,6 +165,23 @@ place_on() { # "idx x y w h scale retina primary"
 shake() {
   [ "${CBWD_SHAKE:-1}" = "0" ] && return 0
   local px="${CBWD_SHAKE_PX:-14}" times="${CBWD_SHAKE_TIMES:-3}"
+  if [ -n "$TERM_WIN_ID" ]; then
+    osascript -e "tell application \"Terminal\"
+      set b to bounds of window id $TERM_WIN_ID
+      set l to item 1 of b
+      set t to item 2 of b
+      set r to item 3 of b
+      set bt to item 4 of b
+      repeat $times times
+        set bounds of window id $TERM_WIN_ID to {l - $px, t, r - $px, bt}
+        delay 0.03
+        set bounds of window id $TERM_WIN_ID to {l + $px, t, r + $px, bt}
+        delay 0.03
+      end repeat
+      set bounds of window id $TERM_WIN_ID to b
+    end tell" >/dev/null 2>&1 || true
+    return 0
+  fi
   osascript -e "tell application \"System Events\" to tell process \"$APP\"
     set p to position of window 1
     set x0 to item 1 of p
@@ -113,7 +205,8 @@ case "${1:-}" in
     cur="$(screen_of_window || true)"
     if [ -z "$cur" ]; then echo "window is not on any known display"; exit 0; fi
     idx=$(printf '%s' "$cur" | cut -f1); ret=$(printf '%s' "$cur" | cut -f7)
-    printf 'app=%s display=%s retina=%s bounds=%s\n' "$APP" "$idx" \
+    printf 'app=%s window=%s display=%s retina=%s bounds=%s\n' "$APP" \
+      "${TERM_WIN_ID:-frontmost}" "$idx" \
       "$( [ "$ret" = 1 ] && echo yes || echo no )" "$(win_get | tr ' ' ',')"
     ;;
 
@@ -146,8 +239,7 @@ case "${1:-}" in
     # window that is already where the user will be looking.
     target="$(retina_line || true)"
     [ -n "$target" ] && place_on "$target"
-    osascript -e "tell application \"$APP\" to activate" >/dev/null 2>&1 \
-      || osascript -e "tell application \"System Events\" to set frontmost of process \"$APP\" to true" >/dev/null 2>&1 || true
+    raise
     [ -f "$SOUND" ] && afplay "$SOUND" &
     shake                      # runs while the sound plays, not after it
     wait 2>/dev/null || true

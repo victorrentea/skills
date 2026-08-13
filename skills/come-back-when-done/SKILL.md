@@ -59,18 +59,33 @@ environment variables override the guesses if needed:
 | variable | use |
 |---|---|
 | `CBWD_TERMINAL_APP` | process name to drive, e.g. `Terminal`, `iTerm2`, `Ghostty`, `Code` |
+| `CBWD_WINDOW_ID` | Apple Terminal window id to drive, skipping tty resolution |
 | `CBWD_SOUND` | path to a different sound file |
 | `CBWD_SHAKE=0` | turn the wobble off |
 | `CBWD_SHAKE_PX` / `CBWD_SHAKE_TIMES` | wobble amplitude in pixels (default 14) and number of oscillations (default 3) |
 
-Moving windows uses System Events, so the terminal app needs **Accessibility**
-permission (System Settings → Privacy & Security → Accessibility). The scripts
-fail with that exact hint if it is missing.
+`where` prints the window it resolved, so it doubles as the check that the right
+one is being driven.
+
+On Apple Terminal nothing else is needed. On any other terminal the fallback path
+moves windows through System Events, which needs **Accessibility** permission
+(System Settings → Privacy & Security → Accessibility); the scripts fail with that
+exact hint if it is missing.
 
 ## Notes
 
 - macOS only. Display geometry comes from AppKit's `NSScreen` via JXA, which ships
   with the OS — there is nothing to install.
+- The window moved is **this session's own**, not the frontmost one. That matters
+  whenever more than one terminal window is open: System Events' `window 1` is
+  whichever window is in front at that instant, so a session that summoned itself
+  could drag an unrelated window — including another Claude session's — across the
+  desktop. On Apple Terminal the own window is found by walking up the process tree
+  to the outermost tty (the shell's own tty is invisible here, and wrappers like
+  `kiro-cli-term`, `tmux` or `script` insert an inner pty that must be skipped),
+  matching that tty against Terminal's tabs, and then addressing the window by its
+  stable id — which also means Terminal moves its own windows, with no System
+  Events and no Accessibility grant.
 - `NSScreen` reports Cocoa coordinates (origin bottom-left, y upwards) while
   window positions use top-left origin with y downwards. `screens.sh` flips the
   axis, so every coordinate the other commands touch is already in window space.
