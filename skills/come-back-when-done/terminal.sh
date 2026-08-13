@@ -166,8 +166,16 @@ screen_of_window() {
 glide() { # x1 y1 w1 h1  x0 y0 w0 h0   (the from-geometry is passed in, never re-read)
   local x1="$1" y1="$2" w1="$3" h1="$4" x0="$5" y0="$6" w0="$7" h0="$8"
   local steps="${CBWD_GLIDE_STEPS:-200}"
-  if [ "$x0" = "$x1" ] && [ "$y0" = "$y1" ] && [ "$w0" = "$w1" ] && [ "$h0" = "$h1" ]; then return; fi
-  if [ "${CBWD_GLIDE:-1}" = "0" ] || [ "$steps" -lt 2 ]; then win_set "$x1" "$y1" "$w1" "$h1"; return; fi
+  # Nothing to animate, or animation switched off — but a summon still has to end
+  # with the window in front, so the raise cannot ride along with the frames here.
+  if [ "$x0" = "$x1" ] && [ "$y0" = "$y1" ] && [ "$w0" = "$w1" ] && [ "$h0" = "$h1" ]; then
+    if [ "${RAISE_WHILE_GLIDING:-0}" = "1" ]; then raise; fi
+    return
+  fi
+  if [ "${CBWD_GLIDE:-1}" = "0" ] || [ "$steps" -lt 2 ]; then
+    if [ "${RAISE_WHILE_GLIDING:-0}" = "1" ]; then raise; fi
+    win_set "$x1" "$y1" "$w1" "$h1"; return
+  fi
 
   local body="set t to i / $steps
       set e to t * t * (3 - 2 * t)
@@ -176,18 +184,41 @@ glide() { # x1 y1 w1 h1  x0 y0 w0 h0   (the from-geometry is passed in, never re
       set nw to round ($w0 + ($w1 - $w0) * e) rounding to nearest
       set nh to round ($h0 + ($h1 - $h0) * e) rounding to nearest"
 
+  # A slide the user watches has to happen ON TOP of everything else: travelling
+  # behind another window is a window that vanished. Raising is the slide's first
+  # statement, not a separate call before it — same script, so the window is
+  # already in front by the time the first frame moves, and it costs no extra
+  # process start.
+  # Asserted twice, at the first frame and after the last: `activate` reorders the
+  # app's windows asynchronously, so a raise issued before it lands gets undone —
+  # the window arrived on the Retina screen sitting second in the stack. The
+  # closing assert costs 3ms and settles it.
+  local lift=''
+  if [ "${RAISE_WHILE_GLIDING:-0}" = "1" ]; then
+    if [ -n "$TERM_WIN_ID" ]; then
+      lift="activate
+      set frontmost of window id $TERM_WIN_ID to true
+      set index of window id $TERM_WIN_ID to 1"
+    else
+      lift="set frontmost of process \"$APP\" to true"
+    fi
+  fi
+
   # The exact landing is the script's last statement rather than a follow-up
   # win_set: that would be another 0.3s of process start for a 3ms move.
   if [ -n "$TERM_WIN_ID" ]; then
     osascript -e "tell application \"Terminal\"
+      $lift
       repeat with i from 1 to $steps
         $body
         set bounds of window id $TERM_WIN_ID to {nx, ny, nx + nw, ny + nh}
       end repeat
       set bounds of window id $TERM_WIN_ID to {$x1, $y1, $(( x1 + w1 )), $(( y1 + h1 ))}
+      $lift
     end tell" >/dev/null 2>&1 || true
   else
     osascript -e "tell application \"System Events\" to tell process \"$APP\"
+      $lift
       repeat with i from 1 to $steps
         $body
         set position of window 1 to {nx, ny}
@@ -195,11 +226,36 @@ glide() { # x1 y1 w1 h1  x0 y0 w0 h0   (the from-geometry is passed in, never re
       end repeat
       set position of window 1 to {$x1, $y1}
       set size of window 1 to {$w1, $h1}
+      $lift
     end tell" >/dev/null 2>&1 || true
   fi
 }
 
+# Final word on where the window sits and how high it sits, in one script. Needed
+# because both drift after the fact: Terminal re-fits a window to whole character
+# cells once it has settled on a new display, and `activate`'s reordering can land
+# a second or two late and put the window that used to be in front back on top.
+# No `activate` here — the app is already active by now, and issuing another one
+# would just start the same race again.
+settle() { # x y w h
+  if [ -n "$TERM_WIN_ID" ]; then
+    osascript -e "tell application \"Terminal\"
+      set bounds of window id $TERM_WIN_ID to {$1, $2, $(( $1 + $3 )), $(( $2 + $4 ))}
+      set frontmost of window id $TERM_WIN_ID to true
+      set index of window id $TERM_WIN_ID to 1
+    end tell" >/dev/null 2>&1 || true
+    return 0
+  fi
+  osascript -e "tell application \"System Events\" to tell process \"$APP\"
+    set position of window 1 to {$1, $2}
+    set size of window 1 to {$3, $4}
+    set frontmost to true
+  end tell" >/dev/null 2>&1 || true
+}
+
 # Place the window centred on a screen line, shrinking it if it does not fit.
+# Records where it put the window, so a caller can re-assert it afterwards.
+PLACED=''
 place_on() { # "idx x y w h scale retina primary"
   local sx sy sw sh; read -r _ sx sy sw sh _ _ _ <<<"$1"
   local wx wy ow oh; read -r wx wy ow oh <<<"$(win_get)"
@@ -208,7 +264,8 @@ place_on() { # "idx x y w h scale retina primary"
   [ "$wh" -gt "$maxh" ] && wh=$maxh
   # from-geometry is the window as it is now, so a size that has to shrink shrinks
   # over the trip instead of snapping on the first frame.
-  glide $(( sx + (sw - ww) / 2 )) $(( sy + (sh - wh) / 2 )) "$ww" "$wh" "$wx" "$wy" "$ow" "$oh"
+  PLACED="$(( sx + (sw - ww) / 2 )) $(( sy + (sh - wh) / 2 )) $ww $wh"
+  glide $PLACED "$wx" "$wy" "$ow" "$oh"
 }
 
 # A short horizontal wobble, so the summon is visible even with the volume down.
@@ -288,6 +345,7 @@ case "${1:-}" in
   to-retina)
     target="$(retina_line || true)"
     [ -n "$target" ] || { echo "no Retina display attached — leaving the window where it is"; exit 0; }
+    RAISE_WHILE_GLIDING=1   # arriving on the Retina screen means being looked at
     place_on "$target"
     echo "moved terminal onto the Retina display (display $(printf '%s' "$target" | cut -f1))"
     ;;
@@ -297,16 +355,17 @@ case "${1:-}" in
     ;;
 
   summon)
-    # Raise it BEFORE the move: the window slides across the monitors to the
-    # Retina screen, and a slide nobody can see (because the window was buried)
-    # is just a teleport. Sound and wobble then land together, on a window that
-    # has already arrived where the user is looking.
-    raise
+    # The window comes up in front and stays there for the whole trip — a slide
+    # nobody can see, because the window travelled behind something, is just a
+    # teleport. Sound and wobble then land together, on a window that has already
+    # arrived where the user is looking.
     target="$(retina_line || true)"
-    [ -n "$target" ] && place_on "$target"
+    RAISE_WHILE_GLIDING=1
+    if [ -n "$target" ]; then place_on "$target"; else raise; fi
     [ -f "$SOUND" ] && afplay "$SOUND" &
     shake                      # runs while the sound plays, not after it
     wait 2>/dev/null || true
+    [ -n "$PLACED" ] && settle $PLACED
     echo "summoned: sound + shake, \"$APP\" raised${target:+ on the Retina display}"
     ;;
 
