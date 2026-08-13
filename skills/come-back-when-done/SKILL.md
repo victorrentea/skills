@@ -28,9 +28,12 @@ confirming it, then get on with the real work.
 bash "${CLAUDE_PLUGIN_ROOT}/skills/come-back-when-done/terminal.sh" summon
 ```
 
-Moves the terminal back onto the Retina display, raises it, then plays a sound and
-gives the window a short wobble at the same time — so the summon still registers
-when the volume is down. Run it **after** everything else is finished, including
+Raises the window first, then **slides** it from wherever it was parked across to
+the Retina display — the travel is the point, it pulls the eye along instead of
+making the user find a window that blinked into existence. On arrival it plays a
+sound and rings the window down with a damped wobble, four swings each smaller
+than the last, so the summon still registers when the volume is down. Run it
+**after** everything else is finished, including
 the final summary — it is the signal that the turn is over, so anything that
 happens after it is something the user has already been told is done.
 
@@ -62,7 +65,10 @@ environment variables override the guesses if needed:
 | `CBWD_WINDOW_ID` | Apple Terminal window id to drive, skipping tty resolution |
 | `CBWD_SOUND` | path to a different sound file |
 | `CBWD_SHAKE=0` | turn the wobble off |
-| `CBWD_SHAKE_PX` / `CBWD_SHAKE_TIMES` | wobble amplitude in pixels (default 14) and number of oscillations (default 3) |
+| `CBWD_SHAKE_PX` / `CBWD_SHAKE_TIMES` | first swing in pixels (default 26) and number of swings (default 4) |
+| `CBWD_SHAKE_FRAMES` | frames the whole wobble is drawn over (default 260 ≈ 0.5s) |
+| `CBWD_GLIDE=0` | teleport between displays instead of sliding |
+| `CBWD_GLIDE_STEPS` | frames per slide (default 200 ≈ 0.5s) |
 
 `where` prints the window it resolved, so it doubles as the check that the right
 one is being driven.
@@ -76,6 +82,13 @@ exact hint if it is missing.
 
 - macOS only. Display geometry comes from AppKit's `NSScreen` via JXA, which ships
   with the OS — there is nothing to install.
+- Both animations are paced by frame count, not by `delay`: AppleScript's `delay`
+  never actually sleeps less than ~100ms however small a number it is given, which
+  turns a slide into a slideshow. One window move inside a running script costs
+  ~3ms, so the frame count is the honest knob. Starting an `osascript` process,
+  by contrast, costs ~0.3s — which is why each animation is a single script, the
+  display layout is read once per command, and the exact landing position is the
+  last statement of the slide rather than a call after it.
 - The window moved is **this session's own**, not the frontmost one. That matters
   whenever more than one terminal window is open: System Events' `window 1` is
   whichever window is in front at that instant, so a session that summoned itself

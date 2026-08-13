@@ -137,7 +137,14 @@ raise() {
     || osascript -e "tell application \"System Events\" to set frontmost of process \"$APP\" to true" >/dev/null 2>&1 || true
 }
 
-screens() { bash "$HERE/screens.sh"; }
+# Memoised: the display layout cannot change mid-command, and each call is a JXA
+# process. Same reason every osascript here is fought over — one costs ~0.3s to
+# start, while a hundred window moves *inside* one cost 3ms each.
+SCREENS_CACHE=''
+screens() {
+  if [ -z "$SCREENS_CACHE" ]; then SCREENS_CACHE="$(bash "$HERE/screens.sh")"; fi
+  printf '%s\n' "$SCREENS_CACHE"
+}
 
 # Which screen contains the window's centre point?
 screen_of_window() {
@@ -149,22 +156,83 @@ screen_of_window() {
   ' || return 3
 }
 
+# Slide the window to its destination instead of teleporting it, so the eye can
+# follow it across the monitors and land on it. Interpolated inside ONE osascript
+# call — a process per frame costs ~50ms and there goes the animation. Eased at
+# both ends (smoothstep), so it leaves and arrives gently.
+# AppleScript's `delay` never gets below ~100ms however small a number you hand
+# it, so the pace comes from the frame count instead: one window move costs ~3ms,
+# which puts the default around two thirds of a second.
+glide() { # x1 y1 w1 h1  x0 y0 w0 h0   (the from-geometry is passed in, never re-read)
+  local x1="$1" y1="$2" w1="$3" h1="$4" x0="$5" y0="$6" w0="$7" h0="$8"
+  local steps="${CBWD_GLIDE_STEPS:-200}"
+  if [ "$x0" = "$x1" ] && [ "$y0" = "$y1" ] && [ "$w0" = "$w1" ] && [ "$h0" = "$h1" ]; then return; fi
+  if [ "${CBWD_GLIDE:-1}" = "0" ] || [ "$steps" -lt 2 ]; then win_set "$x1" "$y1" "$w1" "$h1"; return; fi
+
+  local body="set t to i / $steps
+      set e to t * t * (3 - 2 * t)
+      set nx to round ($x0 + ($x1 - $x0) * e) rounding to nearest
+      set ny to round ($y0 + ($y1 - $y0) * e) rounding to nearest
+      set nw to round ($w0 + ($w1 - $w0) * e) rounding to nearest
+      set nh to round ($h0 + ($h1 - $h0) * e) rounding to nearest"
+
+  # The exact landing is the script's last statement rather than a follow-up
+  # win_set: that would be another 0.3s of process start for a 3ms move.
+  if [ -n "$TERM_WIN_ID" ]; then
+    osascript -e "tell application \"Terminal\"
+      repeat with i from 1 to $steps
+        $body
+        set bounds of window id $TERM_WIN_ID to {nx, ny, nx + nw, ny + nh}
+      end repeat
+      set bounds of window id $TERM_WIN_ID to {$x1, $y1, $(( x1 + w1 )), $(( y1 + h1 ))}
+    end tell" >/dev/null 2>&1 || true
+  else
+    osascript -e "tell application \"System Events\" to tell process \"$APP\"
+      repeat with i from 1 to $steps
+        $body
+        set position of window 1 to {nx, ny}
+        set size of window 1 to {nw, nh}
+      end repeat
+      set position of window 1 to {$x1, $y1}
+      set size of window 1 to {$w1, $h1}
+    end tell" >/dev/null 2>&1 || true
+  fi
+}
+
 # Place the window centred on a screen line, shrinking it if it does not fit.
 place_on() { # "idx x y w h scale retina primary"
   local sx sy sw sh; read -r _ sx sy sw sh _ _ _ <<<"$1"
-  read -r _ _ ww wh <<<"$(win_get)"
-  local maxw=$(( sw * 92 / 100 )) maxh=$(( sh * 92 / 100 ))
+  local wx wy ow oh; read -r wx wy ow oh <<<"$(win_get)"
+  local maxw=$(( sw * 92 / 100 )) maxh=$(( sh * 92 / 100 )) ww="$ow" wh="$oh"
   [ "$ww" -gt "$maxw" ] && ww=$maxw
   [ "$wh" -gt "$maxh" ] && wh=$maxh
-  win_set $(( sx + (sw - ww) / 2 )) $(( sy + (sh - wh) / 2 )) "$ww" "$wh"
+  # from-geometry is the window as it is now, so a size that has to shrink shrinks
+  # over the trip instead of snapping on the first frame.
+  glide $(( sx + (sw - ww) / 2 )) $(( sy + (sh - wh) / 2 )) "$ww" "$wh" "$wx" "$wy" "$ow" "$oh"
 }
 
 # A short horizontal wobble, so the summon is visible even with the volume down.
+# Damped: each swing is a fraction of the one before, so it reads as a window
+# settling down rather than a window being rattled — and it ends in place.
 # The whole oscillation runs inside ONE osascript call: launching osascript per
 # step costs ~50ms and turns a shake into a stutter.
 shake() {
   [ "${CBWD_SHAKE:-1}" = "0" ] && return 0
-  local px="${CBWD_SHAKE_PX:-14}" times="${CBWD_SHAKE_TIMES:-3}"
+  local px="${CBWD_SHAKE_PX:-26}" times="${CBWD_SHAKE_TIMES:-4}" frames="${CBWD_SHAKE_FRAMES:-260}"
+
+  # A damped sinusoid: `times` swings there-and-back under an envelope that fades
+  # to zero, so the window rings down and stops exactly where it started. The
+  # offsets are computed here (awk has sin, AppleScript does not) and handed over
+  # as a list — one number per frame keeps the script small and its compile fast.
+  local offs
+  offs="$(awk -v a="$px" -v c="$times" -v n="$frames" 'BEGIN {
+    pi = 3.14159265358979
+    for (i = 1; i <= n; i++) {
+      t = i / n
+      printf "%s%d", (i > 1 ? ", " : ""), int(a * (1 - t) ^ 1.6 * sin(2 * pi * c * t) + 0.5)
+    }
+  }')"
+
   if [ -n "$TERM_WIN_ID" ]; then
     osascript -e "tell application \"Terminal\"
       set b to bounds of window id $TERM_WIN_ID
@@ -172,11 +240,8 @@ shake() {
       set t to item 2 of b
       set r to item 3 of b
       set bt to item 4 of b
-      repeat $times times
-        set bounds of window id $TERM_WIN_ID to {l - $px, t, r - $px, bt}
-        delay 0.03
-        set bounds of window id $TERM_WIN_ID to {l + $px, t, r + $px, bt}
-        delay 0.03
+      repeat with o in {$offs}
+        set bounds of window id $TERM_WIN_ID to {l + o, t, r + o, bt}
       end repeat
       set bounds of window id $TERM_WIN_ID to b
     end tell" >/dev/null 2>&1 || true
@@ -186,11 +251,8 @@ shake() {
     set p to position of window 1
     set x0 to item 1 of p
     set y0 to item 2 of p
-    repeat $times times
-      set position of window 1 to {x0 - $px, y0}
-      delay 0.03
-      set position of window 1 to {x0 + $px, y0}
-      delay 0.03
+    repeat with o in {$offs}
+      set position of window 1 to {x0 + o, y0}
     end repeat
     set position of window 1 to {x0, y0}
   end tell" >/dev/null 2>&1 || true
@@ -235,11 +297,13 @@ case "${1:-}" in
     ;;
 
   summon)
-    # Park it and raise it FIRST, so the sound and the wobble land together on a
-    # window that is already where the user will be looking.
+    # Raise it BEFORE the move: the window slides across the monitors to the
+    # Retina screen, and a slide nobody can see (because the window was buried)
+    # is just a teleport. Sound and wobble then land together, on a window that
+    # has already arrived where the user is looking.
+    raise
     target="$(retina_line || true)"
     [ -n "$target" ] && place_on "$target"
-    raise
     [ -f "$SOUND" ] && afplay "$SOUND" &
     shake                      # runs while the sound plays, not after it
     wait 2>/dev/null || true
