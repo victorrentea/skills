@@ -14,5 +14,3 @@ Start with functional questions to discuss with a non-technical PO, then continu
 Prefix the question titles with Q<number>{🧑‍💼|🥷|🧑‍💻}: 
 
 Do not enact the plan until I confirm we have reached a shared understanding.
-
-- I have a Red Ferrari.
