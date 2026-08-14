@@ -1,6 +1,7 @@
 ---
 name: then-die
-description: Invoke ONLY when the user explicitly types the keyword "/then-die". Finish the requested work and then close this session's own terminal window, but only if everything succeeded and there is nothing to ask or warn about. Do NOT auto-trigger on "close the terminal", "exit", "you can stop now" or any mention of finishing — activate exclusively on the explicit /then-die keyword.
+description: Close this terminal window after the work, if it all went fine.
+disable-model-invocation: true
 ---
 
 # Then die
@@ -53,8 +54,8 @@ that costs the user something.
 
 ## Rules
 
-- Only on an explicit `/then-die`. Never wire this into a Stop hook, never offer
-  it, never do it because a turn "felt complete".
+- Invocation is the user's alone (`disable-model-invocation`). Never wire it into
+  a Stop hook and never offer it — a turn that "felt complete" is not a reason.
 - Never close early to signal progress — one turn, one death, at the very end.
 - Never claim success just to be allowed to close. If in doubt, stay.
 - The turn's real outcome still gets written normally before the call, even though
