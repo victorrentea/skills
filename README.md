@@ -16,7 +16,6 @@ Then restart Claude Code (or `/plugin` → reload) and the skills below become a
 | Skill | What it does |
 |---|---|
 | `/gratar` | Interviews you relentlessly about a plan, one numbered question at a time, before a line of code is written. Functional 🧑‍💼 → tester 🥷 → technical 🧑‍💻. |
-| `grilling` | Same stress-test, but auto-triggered by phrases like "grill me on this design". |
 | `db` | Blocks any index/migration/query advice until the real schema has been inspected. No recommendations from memory. |
 | `jmeter` | Turns "hit this endpoint with 50 threads" into a JMX test plan and opens it in the JMeter GUI. |
 | `tooltips` | Rules for adding or restyling hover hints in a web UI — fires even on a bare `title=` attribute. |
