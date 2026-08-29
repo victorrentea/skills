@@ -68,11 +68,30 @@ npm run sb -- login          # log in manually; cookies saved to storageState.js
 | `sb -- get --series S --number 324 --out ./out [--name f.pdf]` | download the PDF |
 | `sb -- recent [--series S] [--count 10] [--json]` | the closest thing to a listing without a browser — see below |
 | `sb -- create --json invoice.json` | issue an invoice from a full payload (`invoice.example.json`) |
-| `sb -- pay --json payment.json` | record money received (`payment.example.json`) |
+| `sb -- pay --series S --number 324 [--date] [--value] [--type] [--vat]` | record money received; amount, currency and client are read off the invoice |
+| `sb -- pay --json payment.json` | the same, spelled out in full (`payment.example.json`) |
 | `sb -- storno --series S --number 324` | reverse an invoice in full, into the same series |
 | `sb -- cancel` / `restore --series S --number 324` | void / un-void; the number is kept, so the series has no gap |
 | `sb -- rm --series S --number 324` | **irreversible**, and only allowed for the LAST invoice in a series |
 | `sb -- email --series S --number 324 [--to] [--subject] [--body]` | SmartBill mails the document with the PDF attached |
+
+### Recording a payment
+
+`pay` needs no JSON file for the usual case. Given `--series` and `--number` it
+reads the **amount, currency and counterparty off the invoice itself**, defaults
+the value to whatever is still unpaid, and defaults the date to today:
+
+```bash
+npm run sb -- pay --series P --number 209 --date 2026-08-27 --vat NL001797931B01
+```
+
+It then **re-reads the payment status** and says `settled: true/false`, exiting
+non-zero when the invoice is still open. A 200 from the POST is not evidence the
+document is settled - only the status endpoint is. It also refuses to double-pay:
+an invoice already marked paid comes back as `alreadyPaid` untouched.
+
+Pick the value date from the payment advice, not from the day the email arrived -
+those differ, and the advice is what the client's books show.
 
 ### Reading a document is a PDF operation
 

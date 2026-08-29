@@ -11,7 +11,9 @@
  *   npm run sb -- recent  [--series S] [--count 10] [--json]
  *   npm run sb -- create  --json invoice.json
  *   npm run sb -- storno  --series S --number 324
- *   npm run sb -- pay     --json payment.json
+ *   npm run sb -- pay     --series S --number 324 [--date 2026-08-27]
+ *                         [--value 447.70] [--type "Ordin plata"] [--client X] [--vat RO..]
+ *   npm run sb -- pay     --json payment.json      (full control, see payment.example.json)
  *   npm run sb -- cancel  --series S --number 324
  *   npm run sb -- restore --series S --number 324
  *   npm run sb -- rm      --series S --number 324
@@ -130,7 +132,42 @@ async function runApi(outDir: string): Promise<boolean> {
     }
 
     case 'create': out(await sb.createInvoice(readJson(need('json')))); return true;
-    case 'pay':    out(await sb.createPayment(readJson(need('json')))); return true;
+
+    /* Recording money against an invoice should not need a hand-written JSON
+     * file. With --series/--number the amount, currency and counterparty are
+     * read off the document itself, so the usual case is just the two flags
+     * plus the value date. Then it re-reads the payment status, because the
+     * POST returning 200 is not proof the invoice is settled. */
+    case 'pay': {
+      if (has('json')) { out(await sb.createPayment(readJson(need('json')))); return true; }
+      const series = need('series'), number = need('number');
+      const before = await sb.paymentStatus(series, number);
+      if (before.paid) { out({ alreadyPaid: true, ...before }); return true; }
+
+      const { bytes } = await sb.invoicePdf(series, number);
+      const doc = summarize((await pdfText(bytes)).text);
+      const value = Number(flag('value') ?? before.unpaidAmount);
+      const body: Record<string, unknown> = {
+        client: { name: flag('client') ?? doc.party, vatCode: flag('vat') },
+        issueDate: flag('date', new Date().toISOString().slice(0, 10)),
+        type: flag('type', 'Ordin plata'),
+        value,
+        currency: flag('currency') ?? doc.currency ?? 'RON',
+        isCash: false,
+        useInvoiceDetails: true,
+        invoicesList: [{ seriesName: series, number }],
+      };
+      if (!body.client || !(body.client as any).name) throw new Error('could not read the client off the invoice - pass --client');
+      const res = await sb.createPayment(body);
+      const after = await sb.paymentStatus(series, number);
+      out({ recorded: res, sent: body, status: after,
+            settled: after.paid === true || after.unpaidAmount === 0 });
+      if (!(after.paid === true || after.unpaidAmount === 0)) {
+        console.error(`WARNING: ${series}${number} still shows ${after.unpaidAmount} unpaid`);
+        process.exitCode = 1;
+      }
+      return true;
+    }
     case 'storno': out(await sb.reverseInvoice(need('series'), need('number'), flag('date'))); return true;
 
     case 'cancel':  out(await sb.cancelInvoice(need('series'), need('number'))); return true;
