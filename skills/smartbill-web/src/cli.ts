@@ -212,7 +212,11 @@ async function runBrowser(outDir: string): Promise<boolean> {
     /* --state probes a COPY of a session. Such a probe must not write back, or
      * it extends the very thing it is measuring - hence --no-save. */
     const stateFile = flag('state') ?? STATE;
-    const save = !has('no-save') && !flag('cdp');
+    /* open() honours SMARTBILL_CDP too, so testing only the flag would let an
+     * env-var CDP session overwrite storageState.json with the interactive
+     * browser's cookies - silently replacing the login the keepalive nurses. */
+    const attached = !!(flag('cdp') ?? process.env.SMARTBILL_CDP);
+    const save = !has('no-save') && !attached;
     const { ctx, page, close } = await open({ headless: !has('headed'), cdp: flag('cdp'), state: flag('state') });
     try {
       const target = flag('url', '/raport/facturi/')!;
@@ -363,8 +367,19 @@ async function runBrowser(outDir: string): Promise<boolean> {
       log(`Rewriting ${rows.length} invoices`);
       for (const [i, [id, description, filename]] of rows.entries()) {
         await editDescription(page, id, description);
-        const file = filename ? `(fetch with: sb -- get --series .. --number ..) ${filename}` : '(saved)';
-        log(`[${i + 1}/${rows.length}] id ${id}  ${file}`);
+        /* editDescription is strict, so reaching here means SmartBill confirmed
+         * the save. Re-download the PDF too: the whole point of an edit is the
+         * new PDF, and 'saved' without one is a half-finished job. */
+        const number = (await list(page)).find(x => x.id === id)?.number.replace(/\s/g, '');
+        let file = '(no number - not in the current report period)';
+        if (number) {
+          const m = number.match(/^([A-Za-z]+)(\d+)$/);
+          if (m) {
+            const { bytes } = await sb.invoicePdf(m[1], m[2]);
+            file = savePdf(bytes, outDir, filename ?? `${number}.pdf`);
+          }
+        }
+        log(`[${i + 1}/${rows.length}] ${number ?? `id ${id}`}  ${file}`);
         await jitter();
       }
       return true;

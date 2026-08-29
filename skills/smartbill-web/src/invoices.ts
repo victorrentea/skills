@@ -22,7 +22,6 @@ export const S = {
   exportPdf: '#viewer_pdf_id',                     // PDF icon, inside the viewer
   // '#view_export_disposition' also exists in the MAIN document but is hidden
   // and clicking it navigates to the dashboard. Do not use it.
-  issuedBadge: 'text=/EMISA/i',
 };
 
 export const url = {
@@ -87,15 +86,25 @@ export const viewer = (page: Page) => page.frameLocator(S.viewerFrame);
  * created a document died on the confirmation instead, leaving an unnumbered
  * draft behind. Whether the document really got issued is settled by the API
  * (the series number advances), not by anything on this page. */
-async function saveDocument(page: Page): Promise<void> {
+async function saveDocument(page: Page, opts: { strict?: boolean } = {}): Promise<void> {
   await page.click(S.saveInvoice);
-  // A brand-new document may still need confirming; an edit saves outright.
+  /* A brand-new document may still need confirming. NOT isVisible(): that
+   * returns immediately and IGNORES its timeout option, so the confirm was only
+   * clicked if the iframe happened to be rendered at that instant - which is how
+   * documents ended up saved-but-unissued, as unnumbered drafts. */
   const confirm = viewer(page).locator(S.confirmSave);
-  if (await confirm.isVisible({ timeout: 5_000 }).catch(() => false)) {
-    await confirm.click().catch(() => {});
+  await confirm.waitFor({ state: 'visible', timeout: 5_000 })
+    .then(() => confirm.click())
+    .catch(() => { /* no confirm step for this document - fine */ });
+
+  const saved = await page.waitForSelector('text=/salvat cu succes/i', { timeout: 30_000 })
+    .then(() => true).catch(() => false);
+  /* Callers that verify afterwards (copy polls the series) can tolerate a missing
+   * notice. Callers that do NOT verify must fail loudly here, or they report
+   * success over a save that never happened. */
+  if (!saved && opts.strict !== false) {
+    throw new Error('no "salvat cu succes" after saving - the document may be unchanged');
   }
-  await page.waitForSelector('text=/salvat cu succes/i', { timeout: 30_000 })
-    .catch(() => { /* the series check in the caller is the real verdict */ });
 }
 
 /** Download the PDF of the currently open invoice into `dir`. */
@@ -120,7 +129,7 @@ export async function createFromTemplate(
   await page.goto(url.copy(templateId), { waitUntil: 'domcontentloaded' });
   await setLineDescription(page, description);
   await jitter();
-  await saveDocument(page);
+  await saveDocument(page, { strict: false });   // caller polls the series
 }
 
 /** Rewrite the line description of an existing invoice and re-save it. */
