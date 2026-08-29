@@ -27,7 +27,8 @@
  *   npm run sb -- copy --template 10000000 --csv rows.csv --out ./out
  *   npm run sb -- edit --csv edits.csv --out ./out
  *   npm run sb -- pdf  --id 10000001 --out ./out [--name INV101.pdf]
- *   npm run sb -- inspect --id <id> [--page edit|view] [--js "<expr>"]
+ *   npm run sb -- rmdraft --id <id>   delete an UNNUMBERED draft from the report
+ *   npm run sb -- inspect --id <id> [--page edit|view|report] [--js "<expr>"]
  *                         read-only: dump a document's page, for when SmartBill
  *                         moves a selector and something stops matching
  *   npm run sb -- reclient --name "New Ltd" [--address "line1\nline2"] [--city X]
@@ -191,14 +192,14 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect'];
+const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
   // "no saved session" from open().
   if (!BROWSER_CMDS.includes(cmd)) return false;
   const { open, login, jitter } = await import('./session.js');
-  const { list, createFromTemplate, editDescription, downloadPdf, url } = await import('./invoices.js');
+  const { list, createFromTemplate, editDescription, downloadPdf, url, S } = await import('./invoices.js');
   const { setInvoiceClient } = await import('./clients.js');
 
   if (cmd === 'login') { await login(); return true; }
@@ -235,9 +236,68 @@ async function runBrowser(outDir: string): Promise<boolean> {
       return true;
     }
 
-    if (cmd === 'inspect') {
+    /* `rm` (API) needs a series and a number, and a draft has neither - the only
+     * way to clear one is the row menu in the invoice report, the same click
+     * path a human uses. Drafts are what a failed `copy` leaves behind. */
+    if (cmd === 'rmdraft') {
       const id = need('id');
-      await page.goto(flag('page') === 'view' ? url.view(id) : url.edit(id), { waitUntil: 'domcontentloaded' });
+      await page.goto(url.report, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector(S.invoiceLink, { timeout: 30_000 });
+
+      /* Playwright DISMISSES native dialogs by default, so a window.confirm()
+       * behind Delete silently cancels the deletion and the row stays put -
+       * indistinguishable from a click that never landed. Accept them here. */
+      page.on('dialog', d => { d.accept().catch(() => {}); });
+
+      const row = page.locator('tr').filter({ has: page.locator(`a[href*="/raport/factura/${id}/"]`) }).first();
+      if (!(await row.count())) throw new Error(`no row for document ${id} in the current report period`);
+
+      /* Refuse anything that is not a draft. This clicks a Delete link on a page
+       * full of issued invoices; the is_draft flag is the guardrail that keeps a
+       * mistyped id from destroying a real fiscal document. */
+      const isDraft = (await row.locator('span.is_draft').first().innerText().catch(() => 'False')).trim();
+      if (isDraft !== 'True') {
+        throw new Error(`document ${id} is not a draft (is_draft=${isDraft}) - refusing to delete. ` +
+          `Issued invoices are cancelled or reversed, never deleted: see 'cancel' and 'storno'.`);
+      }
+
+      /* The Delete link lives in a per-row menu that is display:none until the
+       * little tools icon is clicked - `li.unelte_ico_<id>`, which calls
+       * show_tools(<id>). Clicking Delete without opening it first just retries
+       * against an invisible element until it times out. */
+      await row.locator(`li.unelte_ico_${id}`).first().click();
+      const menu = row.locator(`ul.dropDown.tools_${id}`);
+      await menu.waitFor({ state: 'visible', timeout: 10_000 });
+      await menu.locator('a:has-text("Sterge")').first().click();
+      /* Confirm INSIDE the dialog. A page-wide search for "Sterge" finds the
+       * menu link we just clicked before it finds the dialog's button, so the
+       * menu reopens and the deletion never happens - a silent no-op that looks
+       * like a click that did not land. */
+      const dialog = page.locator('.ui-dialog:visible, .modal:visible').first();
+      await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+      await dialog.locator('button:has-text("Sterge")').first().click();
+
+      // Gone from the report is the verdict, not the click.
+      const deadline = Date.now() + 20_000;
+      for (;;) {
+        const still = await page.locator(`a[href*="/raport/factura/${id}/"]`).count()
+          .catch(() => 0);
+        if (!still) break;
+        if (Date.now() > deadline) throw new Error(`document ${id} is still in the report - delete did not take`);
+        await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.waitForSelector(S.invoiceLink, { timeout: 15_000 }).catch(() => {});
+      }
+      out({ deleted: id });
+      return true;
+    }
+
+    if (cmd === 'inspect') {
+      const id = flag('id') ?? '';
+      const target = flag('page') === 'view' ? url.view(id)
+                   : flag('page') === 'report' ? url.report
+                   : url.edit(id);
+      await page.goto(target, { waitUntil: 'domcontentloaded' });
+      if (flag('page') === 'report') await page.waitForSelector(S.invoiceLink, { timeout: 30_000 });
       await page.waitForLoadState('domcontentloaded');
       const expr = flag('js') ?? `({
         url: location.href,

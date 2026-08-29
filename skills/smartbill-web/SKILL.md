@@ -133,6 +133,8 @@ appear nowhere in the API.
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
 | `sb -- pdf --id <id> --out ./out [--name INV101.pdf]` | re-download one PDF by internal id |
+| `sb -- rmdraft --id <id>` | delete an **unnumbered draft** through the row menu; refuses anything issued |
+| `sb -- inspect --id <id> [--page edit\|view\|report] [--js expr]` | read-only dump, for when SmartBill moves a selector |
 | `sb -- reclient --name X [--address ..] [--city ..] (--ids .. \| --series S --from 1 --to 9)` | rewrite the **customer** on invoices already issued; verifies every PDF afterwards |
 
 Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
@@ -259,6 +261,27 @@ The CLI runs through `tsx`, whose esbuild pass rewrites arrow functions with a
 passed to `page.evaluate` / `page.waitForFunction` dies with
 `ReferenceError: __name is not defined`**. Pass a **string expression** instead,
 interpolating any values with `JSON.stringify`. Everything in `clients.ts` does.
+
+### Deleting a draft
+
+`rm` goes through the API and needs a series and a number; a draft has neither,
+so the only way to clear one is the row menu in the invoice report - the same
+clicks a human makes. `rmdraft` does exactly that, and three details make the
+difference between working and silently doing nothing:
+
+- **Open the row menu first.** `ul.dropDown.tools_<id>` is `display:none` until
+  `li.unelte_ico_<id>` is clicked (it calls `show_tools(<id>)`). Clicking Delete
+  without it just retries against an invisible element until it times out.
+- **Confirm inside the dialog.** A page-wide search for a "Sterge" button finds
+  the menu link you just clicked before it finds the dialog's button, so the menu
+  reopens and nothing is deleted - which looks exactly like a click that missed.
+- **Refuse anything that is not a draft.** The row carries `span.is_draft`, and
+  the dialog itself warns that deleting a finalised document *rolls the series
+  number back to the previous one*. On a page full of issued invoices, a mistyped
+  id must not be able to do that.
+
+Playwright also **dismisses native dialogs by default**, so if a delete ever
+hides behind `window.confirm()` it cancels itself. `rmdraft` accepts them.
 
 ### Prefer `create` over `copy` for bulk issuing
 
