@@ -1,0 +1,20 @@
+{
+  "name": "smartbill-automation",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Playwright automation for cloud.smartbill.ro - issue, edit and download invoices in bulk",
+  "scripts": {
+    "sb": "tsx src/cli.ts",
+    "mcp": "tsx src/mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/node": "^22.0.0",
+    "playwright": "^1.49.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "unpdf": "^1.8.0",
+    "zod": "^4.4.3"
+  }
+}

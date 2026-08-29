@@ -1,0 +1,33 @@
+{
+  "_comment": "Payload for: npm run sb -- create --json invoice.example.json. companyVatCode is filled in from ~/.claude/smartbill.env. Run `sb -- taxes` for valid taxName/taxPercentage pairs and `sb -- series` for series names. Set isDraft true while details are unsettled - a draft can still be edited or discarded in SmartBill. issuerCnp is the personal ID of whoever signs the invoice; leave it out unless your template prints it.",
+  "seriesName": "P",
+  "isDraft": true,
+  "currency": "EUR",
+  "exchangeRate": 5.2554,
+  "language": "EN",
+  "issuerName": "Jane Doe",
+  "client": {
+    "name": "Example Client B.V.",
+    "vatCode": "NL000000000B01",
+    "isTaxPayer": true,
+    "address": "Example Street 1",
+    "city": "Amsterdam",
+    "country": "Olanda",
+    "saveToDb": false
+  },
+  "products": [
+    {
+      "name": "One-day onsite workshop for employee Alex Smith, order REF-000000",
+      "measuringUnitName": "buc",
+      "currency": "EUR",
+      "exchangeRate": 5.2554,
+      "quantity": 1,
+      "price": 500.0,
+      "isTaxIncluded": false,
+      "taxName": "Taxare inversa",
+      "taxPercentage": 0,
+      "isService": true,
+      "saveToDb": false
+    }
+  ]
+}

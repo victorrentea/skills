@@ -1,0 +1,7 @@
+node_modules/
+storageState.json
+out/
+smartbill.log
+package-lock.json
+smartbill.env
+*.env

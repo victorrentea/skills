@@ -12,7 +12,7 @@
     {
       "name": "victor-skills",
       "source": "./",
-      "description": "Design grilling, DB guardrails, JMeter load tests, tooltips, self-reasoning audit, Scribd capture and come-back-when-done.",
+      "description": "Design grilling, DB guardrails, JMeter load tests, tooltips, self-reasoning audit, Scribd capture, SmartBill invoice automation and come-back-when-done.",
       "version": "1.0.0"
     }
   ]

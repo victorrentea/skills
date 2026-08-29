@@ -1,0 +1,19 @@
+{
+  "_comment": "Payload for: npm run sb -- pay --json payment.example.json. Records money received against one or more invoices. `type` is one of Chitanta, Bon, Ordin plata, Card, Card online, CEC, Bilet ordin, Mandat postal, Alta incasare, Extras de cont, Ramburs. seriesName is required ONLY when type is Chitanta (a receipt series) - sending it for other types is rejected.",
+  "client": {
+    "name": "EXAMPLE CLIENT SRL",
+    "vatCode": "RO00000000"
+  },
+  "issueDate": "2026-08-30",
+  "type": "Ordin plata",
+  "value": 1000.0,
+  "currency": "RON",
+  "isCash": false,
+  "useInvoiceDetails": true,
+  "invoicesList": [
+    {
+      "seriesName": "S",
+      "number": "323"
+    }
+  ]
+}
