@@ -24,6 +24,19 @@ PAUSE="$LAB/paused-until"
 BORN="$LAB/session-born"
 mkdir -p "$LAB"
 
+# launchd starts jobs with a minimal environment - not your login shell - so a
+# node installed through nvm is NOT on PATH. Without this the npm call fails and
+# the script cannot tell "could not run" from "session is dead".
+resolve_node() {
+  if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    export NVM_DIR="$HOME/.nvm"
+    # shellcheck disable=SC1091
+    . "$NVM_DIR/nvm.sh" --no-use >/dev/null 2>&1 || true
+    local n; n="$(nvm which default 2>/dev/null | tail -1)" || true
+    if [ -n "${n:-}" ] && [ -x "$n" ]; then export PATH="$(dirname "$n"):$PATH"; return 0; fi
+  fi
+  command -v node >/dev/null 2>&1
+}
 now() { date +%s; }
 iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -45,10 +58,20 @@ case "${1:-keepalive}" in
     fi
     [ -f "$PAUSE" ] && rm -f "$PAUSE"
     age_min=$(( ( $(now) - $(born_at) ) / 60 ))
+    if ! resolve_node; then
+      printf '{"at":"%s","status":"error","why":"no node on PATH","ageMinutes":%s}\n' "$(iso)" "$age_min" >> "$LOG"
+      echo "keepalive could not run: no node on PATH" >&2; exit 1
+    fi
     res="$(cd "$HERE" && npm run --silent sb -- touch 2>&1 | tr -d '\n' || true)"
-    alive=false; case "$res" in *'"alive": true'*) alive=true ;; esac
-    printf '{"at":"%s","alive":%s,"ageMinutes":%s}\n' "$(iso)" "$alive" "$age_min" >> "$LOG"
-    $alive || echo "SmartBill session DIED at age ${age_min} min - run: npm run sb -- login" >&2
+    # Three outcomes, not two. A monitor that reports "dead" when it merely
+    # failed to run sends you off to re-login for nothing.
+    if ! printf '%s' "$res" | grep -q '"alive"'; then
+      printf '{"at":"%s","status":"error","ageMinutes":%s}\n' "$(iso)" "$age_min" >> "$LOG"
+      echo "keepalive could not run - output was: $res" >&2; exit 1
+    fi
+    case "$res" in *'"alive": true'*) st=alive ;; *) st=dead ;; esac
+    printf '{"at":"%s","status":"%s","ageMinutes":%s}\n' "$(iso)" "$st" "$age_min" >> "$LOG"
+    [ "$st" = alive ] || echo "SmartBill session DIED at age ${age_min} min - run: npm run sb -- login" >&2
     ;;
 
   pause)
@@ -70,8 +93,9 @@ case "${1:-keepalive}" in
     echo "age:           $(( ( $(now) - $(born_at) ) / 3600 )) h"
     [ -f "$PAUSE" ] && [ "$(now)" -lt "$(cat "$PAUSE")" ] && echo "PAUSED until $(date -r "$(cat "$PAUSE")")"
     [ -f "$LOG" ] || { echo "no touches logged yet"; exit 0; }
-    echo "touches:       $(grep -c '"alive"' "$LOG" || true)"
-    echo "deaths:        $(grep -c '"alive":false' "$LOG" || true)"
+    echo "touches:       $(grep -c '"status"' "$LOG" || true)"
+    echo "deaths:        $(grep -c '"status":"dead"' "$LOG" || true)"
+    echo "run errors:    $(grep -c '"status":"error"' "$LOG" || true)"
     echo "last 5:"; tail -5 "$LOG"
     ;;
 
