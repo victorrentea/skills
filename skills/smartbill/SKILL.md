@@ -27,6 +27,7 @@ API genuinely cannot do:
 | **Enumerate documents** | SmartBill's public API has no listing endpoint. Only `/series`, `/tax` and `/stocks` return lists — there is no `GET /invoices`. | `sb -- list` (browser) — or `sb -- recent`, see below |
 | **Edit an issued invoice** | No update endpoint exists. The API can only create, cancel, storno or delete. | `sb -- edit` (browser) |
 | **Copy an existing invoice** | No "duplicate document" endpoint. `create` needs the full client + line payload spelled out. | `sb -- copy` (browser) |
+| **Change the customer on an issued invoice** | No update endpoint, and the client endpoints are read-only. | `sb -- reclient` (browser) |
 
 Everything else — reading a document, payment status, PDFs, issuing, payments,
 cancel/storno/delete, emailing — goes through the API.
@@ -108,10 +109,12 @@ appear nowhere in the API.
 | Command | What it does |
 |---|---|
 | `sb -- login` | interactive login, saves cookies |
+| `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
 | `sb -- list` | `number<TAB>id` for every invoice in the current report period. **The only source of internal ids.** |
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
 | `sb -- pdf --id <id> --out ./out [--name INV101.pdf]` | re-download one PDF by internal id |
+| `sb -- reclient --name X [--address ..] [--city ..] (--ids .. \| --series S --from 1 --to 9)` | rewrite the **customer** on invoices already issued; verifies every PDF afterwards |
 
 Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
 
@@ -135,6 +138,88 @@ Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
 ```
 
 Get the ids from `list`.
+
+### Changing the customer on an issued invoice
+
+An invoice keeps its **own snapshot** of the client, frozen at issue time. Three
+things follow, and each one has cost an afternoon:
+
+- **Fixing the client record does not reach invoices already issued.** The
+  nomenclator and the document are separate copies. A client whose name and
+  address you corrected last week still prints the old ones on last month's
+  invoices.
+- **Re-saving the invoice does not refresh the snapshot either.** The invoice
+  form does not even contain the client fields - they live in a separate form
+  (`filter_form2_emitere`) that is not submitted with the document. SmartBill
+  answers "Documentul a fost salvat cu succes!" and the PDF comes back byte-for-byte
+  the same.
+- **Only the "Modifica client existent" modal rewrites it**, opened by the
+  page-global `edit_client()`. Its inputs must receive **real input events**;
+  values assigned to `.value` from injected JS are dropped on save, which looks
+  exactly like the silent no-op above.
+
+`reclient` does that flow, then re-reads each document from the PDF endpoint and
+checks the customer name **and every line of the address**. The name can land
+while the address quietly does not, so checking only the name passes a batch
+that is still wrong. The run stops on the first document that did not change,
+rather than working through the other twenty-four.
+
+```bash
+npm run sb -- reclient --series P --from 210 --to 234 \
+  --name 'New Name B.V.' --address 'T.a.v. Dept\nStreet 18\n1234 AB' --city 'Utrecht' \
+  --out ./out --csv names.csv        # names.csv: number,filename
+```
+
+Add `--dry-run` to stage the modal without saving the document.
+
+### How long a login lasts
+
+SmartBill's `sessionid` is a **browser-session cookie** - no expiry of its own,
+so it lives as long as the context holding it. `login` writes it to
+`storageState.json`, which is why the CLI keeps working after the browser closes.
+What actually ends the session is the **server side**: Django expires the session
+record, and SmartBill also rotates `srvid` / `dsc` on roughly a 30-day cadence.
+
+Django rolls a session forward on every request when `SESSION_SAVE_EVERY_REQUEST`
+is on, so touching an authenticated page keeps it alive:
+
+```bash
+npm run sb -- touch     # {"alive":true,"sessionRefreshed":true}
+```
+
+It exits non-zero when the session is gone, so it doubles as a health check
+before a long batch. Schedule it (launchd, cron, `/loop`) once a week and the
+saved login stops being something you think about. There is no way to make a
+session literally never expire - if the server sets a hard maximum age, no amount
+of touching survives it - so treat `touch` as "much less often", not "never", and
+keep `login` one command away.
+
+### Driving a browser you are already signed into
+
+`--cdp http://127.0.0.1:9222` attaches to a running Chrome instead of using the
+saved `login` session. Use it when the account owner is not at the keyboard, or
+when you want the automation to share a session a human keeps alive.
+
+Chrome 136 and later **refuse remote debugging on the default profile** - that
+hole was being used to lift cookies - so this needs its own profile directory,
+signed into SmartBill once:
+
+```bash
+open -na "Google Chrome" --args \
+  --remote-debugging-port=9222 --user-data-dir="$HOME/.chrome-smartbill"
+```
+
+Do not try to reach the session by reading Chrome's cookie store instead: those
+files are encrypted against the login keychain, and copying them around is
+credential theft with extra steps.
+
+### page.evaluate and the `__name` helper
+
+The CLI runs through `tsx`, whose esbuild pass rewrites arrow functions with a
+`__name` helper. That helper does not exist inside the page, so **a function
+passed to `page.evaluate` / `page.waitForFunction` dies with
+`ReferenceError: __name is not defined`**. Pass a **string expression** instead,
+interpolating any values with `JSON.stringify`. Everything in `clients.ts` does.
 
 ### Why bulk issuing stays on the browser
 
@@ -212,6 +297,10 @@ input events through CDP, so `waitForEvent('download')` works.
 - One invoice line only in `copy`/`edit`. Multi-line invoices need
   `setLineDescription` to take an index.
 - Dry-run with `--headed` on one row before a bulk run.
+- After any browser write, **verify against the PDF endpoint**, never against the
+  form you just filled in. The form reports what you typed; the PDF reports what
+  was stored. Reading the modal back after it closes is worse than useless - it
+  has been reset by then, so it reports blanks for a change that did land.
 
 ## Claude Desktop
 

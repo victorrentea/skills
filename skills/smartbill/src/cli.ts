@@ -20,6 +20,7 @@
  * BROWSER commands (Playwright on cloud.smartbill.ro, need `login` first) -
  * these do what the API cannot:
  *   npm run sb -- login
+ *   npm run sb -- touch                     -- keep the saved session from ageing out
  *   npm run sb -- list                     -- the ONLY way to enumerate documents
  *   npm run sb -- copy --template 10000000 --csv rows.csv --out ./out
  *   npm run sb -- edit --csv edits.csv --out ./out
@@ -150,7 +151,7 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient'];
+const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient', 'touch'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
@@ -161,6 +162,26 @@ async function runBrowser(outDir: string): Promise<boolean> {
   const { setInvoiceClient } = await import('./clients.js');
 
   if (cmd === 'login') { await login(); return true; }
+
+  /* Django rolls a session forward on each request when SESSION_SAVE_EVERY_REQUEST
+   * is on, so a periodic authenticated hit keeps `login` from ageing out. Re-saving
+   * storageState afterwards captures whatever the server rotated. */
+  if (cmd === 'touch') {
+    const { STATE } = await import('./session.js');
+    const { ctx, page, close } = await open({ headless: !has('headed'), cdp: flag('cdp') });
+    try {
+      const target = flag('url', '/raport/facturi/')!;
+      const res = await page.goto(`https://cloud.smartbill.ro${target}`, { waitUntil: 'domcontentloaded' });
+      const landed = page.url();
+      const alive = !/\/auth\/login/.test(landed);
+      if (alive && !flag('cdp')) await ctx.storageState({ path: STATE });
+      out({ alive, status: res?.status() ?? null, landedOn: landed,
+            sessionRefreshed: alive && !flag('cdp'),
+            hint: alive ? undefined : 'session is gone - run: npm run sb -- login' });
+      if (!alive) process.exitCode = 1;
+      return true;
+    } finally { await close(); }
+  }
 
   const { page, close } = await open({ headless: !has('headed'), cdp: flag('cdp') });
   try {
@@ -248,6 +269,13 @@ async function runBrowser(outDir: string): Promise<boolean> {
             const party = summarize(text).party ?? '';
             if (party.trim() !== want.name.trim()) {
               throw new Error(`${t.number}: PDF still shows "${party}" - stopping before the rest of the batch`);
+            }
+            // The name can land while the address silently does not - check both.
+            const flat = text.replace(/\s+/g, ' ');
+            for (const line of (want.address ?? '').split('\n').map(l => l.trim()).filter(Boolean)) {
+              if (!flat.includes(line)) {
+                throw new Error(`${t.number}: PDF is missing address line "${line}" - stopping before the rest of the batch`);
+              }
             }
             verdict = 'verified in PDF';
             if (flag('out')) {

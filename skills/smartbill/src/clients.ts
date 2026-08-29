@@ -45,12 +45,12 @@ async function openClientModal(page: Page) {
   await page.waitForSelector(S_CLIENT.nameOnInvoice, { timeout: 30_000 });
   // The pencil is revealed on hover; calling the page's own handler is steadier
   // than chasing hover state, and it is the same code path the click triggers.
-  const opened = await page.evaluate(() => {
-    const f = (window as any).edit_client;
-    if (typeof f !== 'function') return false;
-    f();
-    return true;
-  });
+  /* String form on purpose: tsx/esbuild compiles arrow functions with a
+   * `__name` helper that does not exist in the page, so a function passed to
+   * evaluate() dies with "__name is not defined". */
+  const opened = await page.evaluate<boolean>(
+    "typeof window.edit_client === 'function' ? (window.edit_client(), true) : false"
+  );
   if (!opened) throw new Error('edit_client() missing - SmartBill changed the issuing page');
   await page.waitForSelector(`${S_CLIENT.modalSave}:visible`, { timeout: 20_000 });
 }
@@ -76,28 +76,26 @@ export async function setInvoiceClient(
   if (want.county !== undefined) await page.fill(S_CLIENT.modalCounty, want.county);
   if (want.country !== undefined) await page.fill(S_CLIENT.modalCountry, want.country);
 
+  // Read the modal back BEFORE saving it: closing the modal resets these inputs,
+  // so anything read afterwards describes a blank form, not the document.
+  const q = (sel: string) => `((document.querySelector(${JSON.stringify(sel)}) || {}).value || '')`;
+  const staged = await page.evaluate<Record<string, string>>(
+    `({ id: ${q(S_CLIENT.idOnInvoice)}, name: ${q(S_CLIENT.modalName)},`
+    + ` address: ${q(S_CLIENT.modalAddress)}, city: ${q(S_CLIENT.modalCity)},`
+    + ` country: ${q(S_CLIENT.modalCountry)} })`
+  );
+
   await page.click(S_CLIENT.modalSave);
 
   // The modal must close AND the header must carry the new name. Waiting on only
   // one of the two has let a half-applied edit through.
   await page.waitForSelector(`${S_CLIENT.modal}:visible`, { state: 'hidden', timeout: 20_000 })
     .catch(() => { throw new Error('client modal stayed open - the save was rejected'); });
-  await page.waitForFunction(
-    (sel_name: [string, string]) => {
-      const el = document.querySelector(sel_name[0]) as HTMLInputElement | null;
-      return !!el && el.value.trim() === sel_name[1];
-    },
-    [S_CLIENT.nameOnInvoice, want.name] as [string, string],
-    { timeout: 20_000 }
-  ).catch(() => { throw new Error(`invoice header still not showing "${want.name}"`); });
-
-  const staged = await page.evaluate((s) => {
-    const v = (sel: string) => (document.querySelector(sel) as HTMLInputElement | null)?.value ?? '';
-    return {
-      id: v(s.idOnInvoice), name: v(s.nameOnInvoice), address: v(s.modalAddress),
-      city: v(s.modalCity), country: v(s.modalCountry),
-    };
-  }, S_CLIENT);
+  const headerShowsName =
+    `((document.querySelector(${JSON.stringify(S_CLIENT.nameOnInvoice)}) || {}).value || '').trim()`
+    + ` === ${JSON.stringify(want.name)}`;
+  await page.waitForFunction(headerShowsName, undefined, { timeout: 20_000 })
+    .catch(() => { throw new Error(`invoice header still not showing "${want.name}"`); });
 
   if (opts.dryRun) return staged;
 
