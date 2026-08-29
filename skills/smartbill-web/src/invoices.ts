@@ -57,8 +57,25 @@ async function setLineDescription(page: Page, description: string) {
   if (await desc.count()) await desc.first().fill('');   // never leave a stray BT-154
   await page.locator(S.modalSubmit).first().click();
   await name.waitFor({ state: 'hidden', timeout: 15_000 });
-  // the line row must now carry the new text - fail loud if it does not
-  await page.waitForSelector(`text=${JSON.stringify(description.slice(-30))}`, { timeout: 15_000 });
+  /* The line row must now carry the new text - fail loud if it does not, rather
+   * than save an invoice whose description never took.
+   *
+   * NOT `waitForSelector('text="..."')`: quoting makes Playwright match the
+   * element's WHOLE text exactly, and the row holds the full description, so a
+   * tail fragment never matches and every copy died on a healthy page. Substring
+   * against normalised text, polled until it shows up - no fixed sleep. */
+  const needle = description.slice(-30).replace(/\s+/g, ' ').trim();
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const seen = await page.evaluate<boolean>(
+      `document.body.innerText.replace(/\\s+/g, ' ').includes(${JSON.stringify(needle)})`
+    );
+    if (seen) break;
+    if (Date.now() > deadline) {
+      throw new Error(`line description did not appear on the invoice: ${JSON.stringify(needle)}`);
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
 }
 
 /** The document viewer that appears after saving. Lives in its own iframe. */
