@@ -260,7 +260,37 @@ passed to `page.evaluate` / `page.waitForFunction` dies with
 `ReferenceError: __name is not defined`**. Pass a **string expression** instead,
 interpolating any values with `JSON.stringify`. Everything in `clients.ts` does.
 
-### Why bulk issuing stays on the browser
+### Prefer `create` over `copy` for bulk issuing
+
+**`copy` no longer issues anything.** SmartBill's copy flow now ends in an
+UNNUMBERED draft that needs a confirmation step, and the control that used to
+provide it - `#view_save_disposition` inside `iframe[src*=compact-view]` - is
+gone, along with the EMISA badge and `#viewer_pdf_id` next to it. A run reports
+failure while having created a document, so re-running silently issues the same
+line twice. `copy` now stops and names the leftover instead, but the leftover
+still has to be deleted by hand: `rm` needs a series and a number, and a draft
+has neither.
+
+Issue in bulk through the **API** instead. `create` numbers and issues the
+document in one call, returns the number, and never opens a browser:
+
+```bash
+npm run sb -- create --json one-invoice.json     # -> {"series":"P","number":"235"}
+npm run sb -- get --series P --number 235 --out ./out --name whatever.pdf
+```
+
+Spelling out ~20 fields per invoice was the reason `copy` existed, but that is
+what a loop is for: generate the payloads from your own data, POST each one,
+then re-read each PDF and check the party, the total and the line before moving
+on. A 22-invoice batch this way took under two minutes with every document
+verified, after `copy` could not manage one.
+
+When comparing a line against the PDF, **squeeze whitespace on both sides**. The
+PDF wraps long lines and extraction turns the break into a space, so
+`RAB-425628` reads back as `RAB- 425628` and a strict equality check fails on a
+perfectly good invoice.
+
+### Why bulk issuing stayed on the browser (historical)
 
 `copy` inherits client, currency, VAT rate, payment term and price from the
 template and changes only the description — one CSV column instead of the ~20
