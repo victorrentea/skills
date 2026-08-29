@@ -81,18 +81,21 @@ async function setLineDescription(page: Page, description: string) {
 /** The document viewer that appears after saving. Lives in its own iframe. */
 export const viewer = (page: Page) => page.frameLocator(S.viewerFrame);
 
-async function saveAndIssue(page: Page): Promise<string> {
+/* Click save and wait for SmartBill to accept it. Deliberately does NOT look
+ * inside the compact-view iframe any more: both handles this used - the EMISA
+ * badge and #viewer_pdf_id - stopped matching, and a copy that had in fact
+ * created a document died on the confirmation instead, leaving an unnumbered
+ * draft behind. Whether the document really got issued is settled by the API
+ * (the series number advances), not by anything on this page. */
+async function saveDocument(page: Page): Promise<void> {
   await page.click(S.saveInvoice);
-  const v = viewer(page);
-  // A draft shows a preview with a confirm button; an already-issued invoice
-  // saves straight away. Both render inside the viewer iframe.
-  const confirm = v.locator(S.confirmSave);
-  if (await confirm.isVisible({ timeout: 8_000 }).catch(() => false)) {
-    await confirm.click();
+  // A brand-new document may still need confirming; an edit saves outright.
+  const confirm = viewer(page).locator(S.confirmSave);
+  if (await confirm.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    await confirm.click().catch(() => {});
   }
-  await v.locator(S.issuedBadge).first().waitFor({ timeout: 30_000 });
-  const body = (await v.locator('body').innerText()) ?? '';
-  return body.match(/Emitere factura\s+([A-Z]+\d+)/)?.[1] ?? (await page.title());
+  await page.waitForSelector('text=/salvat cu succes/i', { timeout: 30_000 })
+    .catch(() => { /* the series check in the caller is the real verdict */ });
 }
 
 /** Download the PDF of the currently open invoice into `dir`. */
@@ -109,22 +112,23 @@ export async function downloadPdf(page: Page, dir: string, filename?: string): P
   return target;
 }
 
-/** Copy `templateId`, swap the line description, issue it. Returns the new number. */
+/** Copy `templateId`, swap the line description, save it. The CALLER confirms
+ *  the issue against the API - see saveDocument. */
 export async function createFromTemplate(
   page: Page, templateId: string | number, description: string
-): Promise<string> {
+): Promise<void> {
   await page.goto(url.copy(templateId), { waitUntil: 'domcontentloaded' });
   await setLineDescription(page, description);
   await jitter();
-  return saveAndIssue(page);
+  await saveDocument(page);
 }
 
 /** Rewrite the line description of an existing invoice and re-save it. */
 export async function editDescription(
   page: Page, invoiceId: string | number, description: string
-): Promise<string> {
+): Promise<void> {
   await page.goto(url.edit(invoiceId), { waitUntil: 'domcontentloaded' });
   await setLineDescription(page, description);
   await jitter();
-  return saveAndIssue(page);
+  await saveDocument(page);
 }

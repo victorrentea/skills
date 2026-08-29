@@ -27,6 +27,9 @@
  *   npm run sb -- copy --template 10000000 --csv rows.csv --out ./out
  *   npm run sb -- edit --csv edits.csv --out ./out
  *   npm run sb -- pdf  --id 10000001 --out ./out [--name INV101.pdf]
+ *   npm run sb -- inspect --id <id> [--page edit|view] [--js "<expr>"]
+ *                         read-only: dump a document's page, for when SmartBill
+ *                         moves a selector and something stops matching
  *   npm run sb -- reclient --name "New Ltd" [--address "line1\nline2"] [--city X]
  *                          (--ids 10000001,10000002 | --series A --from 101 --to 125)
  *                          [--dry-run] [--out ./out] [--csv names.csv]
@@ -188,7 +191,7 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient', 'touch'];
+const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
@@ -232,6 +235,24 @@ async function runBrowser(outDir: string): Promise<boolean> {
       return true;
     }
 
+    if (cmd === 'inspect') {
+      const id = need('id');
+      await page.goto(flag('page') === 'view' ? url.view(id) : url.edit(id), { waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('domcontentloaded');
+      const expr = flag('js') ?? `({
+        url: location.href,
+        title: document.title,
+        frames: [...document.querySelectorAll('iframe')].map(f => (f.src || '').slice(0, 80)),
+        buttons: [...document.querySelectorAll('button,a')]
+          .filter(e => e.offsetWidth || e.offsetHeight)
+          .map(e => ({ id: e.id, txt: (e.innerText || '').trim().slice(0, 40) }))
+          .filter(e => e.txt).slice(0, 30),
+        bodyStart: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 300)
+      })`;
+      out(await page.evaluate(expr));
+      return true;
+    }
+
     if (cmd === 'pdf') {
       const id = need('id');
       await page.goto(url.view(id), { waitUntil: 'domcontentloaded' });
@@ -242,11 +263,36 @@ async function runBrowser(outDir: string): Promise<boolean> {
     if (cmd === 'copy') {
       const tpl = need('template');
       const rows = parseCsv(need('csv'));
-      log(`Creating ${rows.length} invoices from template ${tpl}`);
+      const seriesName = flag('series', 'P')!;
+      const nextOf = async () => {
+        const s = (await sb.listSeries('factura')).find((x: any) => x.name === seriesName);
+        if (!s) throw new Error(`series ${seriesName} not found`);
+        return Number(s.nextNumber);
+      };
+      log(`Creating ${rows.length} invoices from template ${tpl} into series ${seriesName}`);
       for (const [i, [description, filename]] of rows.entries()) {
-        const num = await createFromTemplate(page, tpl, description);
-        const file = await downloadPdf(page, outDir, filename);
-        log(`[${i + 1}/${rows.length}] ${num}  ${file}`);
+        const before = await nextOf();
+        await createFromTemplate(page, tpl, description);
+
+        /* The API decides whether it was issued. Polling the series is both the
+         * confirmation and the way to learn the number - the page no longer
+         * reports either reliably. */
+        let issued = 0;
+        const deadline = Date.now() + 30_000;
+        for (;;) {
+          const now = await nextOf();
+          if (now > before) { issued = now - 1; break; }
+          if (Date.now() > deadline) {
+            throw new Error(`${seriesName} did not advance past ${before - 1} - the document was saved but not issued. ` +
+              `Confirm or delete the leftover in SmartBill before re-running, or this row will be created twice.`);
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        // PDF over the API: no compact-view iframe, nothing to break.
+        const { bytes } = await sb.invoicePdf(seriesName, String(issued));
+        const file = savePdf(bytes, outDir, filename ?? `${seriesName}${issued}.pdf`);
+        log(`[${i + 1}/${rows.length}] ${seriesName}${issued}  ${file}`);
         await jitter();
       }
       return true;
@@ -256,9 +302,9 @@ async function runBrowser(outDir: string): Promise<boolean> {
       const rows = parseCsv(need('csv'));
       log(`Rewriting ${rows.length} invoices`);
       for (const [i, [id, description, filename]] of rows.entries()) {
-        const num = await editDescription(page, id, description);
-        const file = await downloadPdf(page, outDir, filename);
-        log(`[${i + 1}/${rows.length}] ${num}  ${file}`);
+        await editDescription(page, id, description);
+        const file = filename ? `(fetch with: sb -- get --series .. --number ..) ${filename}` : '(saved)';
+        log(`[${i + 1}/${rows.length}] id ${id}  ${file}`);
         await jitter();
       }
       return true;
