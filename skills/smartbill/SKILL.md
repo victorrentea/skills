@@ -172,27 +172,47 @@ npm run sb -- reclient --series P --from 210 --to 234 \
 
 Add `--dry-run` to stage the modal without saving the document.
 
-### How long a login lasts
+### How long a login lasts, and keeping it alive
 
-SmartBill's `sessionid` is a **browser-session cookie** - no expiry of its own,
-so it lives as long as the context holding it. `login` writes it to
-`storageState.json`, which is why the CLI keeps working after the browser closes.
-What actually ends the session is the **server side**: Django expires the session
-record, and SmartBill also rotates `srvid` / `dsc` on roughly a 30-day cadence.
-
-Django rolls a session forward on every request when `SESSION_SAVE_EVERY_REQUEST`
-is on, so touching an authenticated page keeps it alive:
+`sessionid` is a **browser-session cookie** - no expiry of its own - so `login`
+writing it to `storageState.json` is what lets the CLI keep working after the
+browser closes. Do not read the other cookies as a lifetime: `srvid` and `dsc`
+carry 30-day expiries but have nothing to do with authentication. What ends the
+session is the **server**, and observed behaviour is an **idle timeout measured
+in hours**, not days.
 
 ```bash
-npm run sb -- touch     # {"alive":true,"sessionRefreshed":true}
+npm run sb -- touch                    # {"alive":true,"sessionRefreshed":true}
+bin/install-launchd.sh 900             # touch every 15 min, forever
+bin/session-lab.sh status              # age, touches, deaths
+bin/install-launchd.sh --uninstall
 ```
 
-It exits non-zero when the session is gone, so it doubles as a health check
-before a long batch. Schedule it (launchd, cron, `/loop`) once a week and the
-saved login stops being something you think about. There is no way to make a
-session literally never expire - if the server sets a hard maximum age, no amount
-of touching survives it - so treat `touch` as "much less often", not "never", and
-keep `login` one command away.
+`touch` exits non-zero when the session is gone, so it doubles as a health check
+before a long batch. launchd rather than cron: a crontab on recent macOS needs
+Full Disk Access or it dies silently.
+
+Run `bin/session-lab.sh reborn` right after `login` so the age clock restarts.
+
+**Measuring, without a second account.** Two different questions hide here, and
+one experimental design answers both:
+
+- *How long does an idle session last?* `bin/session-lab.sh pause 4h` stops the
+  touches. Whether the next touch after the gap finds the session alive is the
+  measurement.
+- *Does touching keep it alive forever, or is there an absolute cap?* The log
+  answers on its own. If the session dies while touches were landing, the
+  `ageMinutes` at death is the cap.
+
+**Do not** try to build a control arm by copying `storageState.json`. Every copy
+carries the same `sessionid` and therefore touches the same server-side session:
+keeping one alive keeps them all alive, and the "control" measures nothing. An
+independent control needs a second real login.
+
+One more trap: do not take `storageState.json`'s mtime as the session's birth.
+`touch` rewrites that file every run, so the mtime is always "just now" and the
+age at death - the single number that reveals an absolute cap - reads as zero
+forever. `session-lab.sh` stamps the birth once, in its own file.
 
 ### Driving a browser you are already signed into
 

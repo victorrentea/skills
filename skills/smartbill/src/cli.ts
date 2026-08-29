@@ -20,7 +20,7 @@
  * BROWSER commands (Playwright on cloud.smartbill.ro, need `login` first) -
  * these do what the API cannot:
  *   npm run sb -- login
- *   npm run sb -- touch                     -- keep the saved session from ageing out
+ *   npm run sb -- touch [--state f] [--no-save]  -- keep the saved session from ageing out
  *   npm run sb -- list                     -- the ONLY way to enumerate documents
  *   npm run sb -- copy --template 10000000 --csv rows.csv --out ./out
  *   npm run sb -- edit --csv edits.csv --out ./out
@@ -168,15 +168,20 @@ async function runBrowser(outDir: string): Promise<boolean> {
    * storageState afterwards captures whatever the server rotated. */
   if (cmd === 'touch') {
     const { STATE } = await import('./session.js');
-    const { ctx, page, close } = await open({ headless: !has('headed'), cdp: flag('cdp') });
+    /* --state probes a COPY of a session. Such a probe must not write back, or
+     * it extends the very thing it is measuring - hence --no-save. */
+    const stateFile = flag('state') ?? STATE;
+    const save = !has('no-save') && !flag('cdp');
+    const { ctx, page, close } = await open({ headless: !has('headed'), cdp: flag('cdp'), state: flag('state') });
     try {
       const target = flag('url', '/raport/facturi/')!;
       const res = await page.goto(`https://cloud.smartbill.ro${target}`, { waitUntil: 'domcontentloaded' });
       const landed = page.url();
       const alive = !/\/auth\/login/.test(landed);
-      if (alive && !flag('cdp')) await ctx.storageState({ path: STATE });
+      if (alive && save) await ctx.storageState({ path: stateFile });
       out({ alive, status: res?.status() ?? null, landedOn: landed,
-            sessionRefreshed: alive && !flag('cdp'),
+            stateFile, sessionRefreshed: alive && save,
+            checkedAt: new Date().toISOString(),
             hint: alive ? undefined : 'session is gone - run: npm run sb -- login' });
       if (!alive) process.exitCode = 1;
       return true;

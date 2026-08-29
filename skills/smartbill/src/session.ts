@@ -20,7 +20,7 @@ export interface Session {
   close(): Promise<void>;
 }
 
-export async function open(opts: { headless?: boolean; downloadDir?: string; cdp?: string } = {}): Promise<Session> {
+export async function open(opts: { headless?: boolean; downloadDir?: string; cdp?: string; state?: string } = {}): Promise<Session> {
   /* Attaching to a Chrome you are already signed into beats `login` whenever the
    * person who owns the account is not at the keyboard. Start Chrome with
    *   --remote-debugging-port=9222
@@ -39,9 +39,10 @@ export async function open(opts: { headless?: boolean; downloadDir?: string; cdp
     };
   }
 
-  if (!existsSync(STATE)) {
+  const stateFile = opts.state ?? STATE;
+  if (!existsSync(stateFile)) {
     throw new Error(
-      `No saved session at ${STATE}.\nRun:  npm run sb -- login\n` +
+      `No saved session at ${stateFile}.\nRun:  npm run sb -- login\n` +
       `and log into SmartBill in the window that opens.\n` +
       `Or attach to an already-signed-in Chrome started with --remote-debugging-port=9222:\n` +
       `  npm run sb -- <cmd> --cdp http://127.0.0.1:9222`
@@ -49,7 +50,7 @@ export async function open(opts: { headless?: boolean; downloadDir?: string; cdp
   }
   const browser = await chromium.launch({ headless: opts.headless ?? true });
   const ctx = await browser.newContext({
-    storageState: STATE,
+    storageState: stateFile,
     acceptDownloads: true,
     viewport: { width: 1440, height: 900 },
   });
