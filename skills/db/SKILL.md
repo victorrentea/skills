@@ -1,6 +1,6 @@
 ---
 name: db
-description: Use whenever about to suggest, recommend, or make ANY database change (index, column, constraint, migration, query rewrite). Triggers on indexing advice, schema changes, "add an index", "optimize this query", or any DB DDL/migration suggestion.
+description: Use whenever about to suggest, recommend, or make ANY database change (index, column, constraint, migration, query rewrite). Triggers on indexing advice, schema changes, "add an index", or "optimize this query".
 ---
 
 # DB

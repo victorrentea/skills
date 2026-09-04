@@ -1,6 +1,6 @@
 ---
 name: why
-description: Use when the user asks "why did you..." about your own actions, wants your reasoning / thought process / decisions in this session explained or audited, or invokes /why. Also for investigating your own drift, spiraling, or a surprising choice. Reconstructs reasoning from the session transcript plus captured chain-of-thought summaries.
+description: Explains or audits Claude's own reasoning or a surprising choice in this session, reconstructed from the transcript and chain-of-thought. Trigger on "why did you...", investigating drift, or /why.
 ---
 
 # Why — explain my own reasoning from the session trace

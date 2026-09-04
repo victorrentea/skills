@@ -1,6 +1,6 @@
 ---
 name: tooltips
-description: Use whenever adding, restyling, or reviewing a tooltip / hover hint in any web UI — including reaching for a native `title=` attribute, `el.title = ...`, or a CSS `::after` speech bubble. Triggers on "add a tooltip", "show a hint on hover", "what does this button do", tooltip styling, or any hover-label work.
+description: Add, restyle, or review a tooltip/hover hint in any web UI, including a native `title=` attribute, `el.title = ...`, or a CSS `::after` speech bubble. Triggers on "add a tooltip", "show a hint on hover", "what does this button do", or tooltip styling.
 ---
 
 # Tooltips

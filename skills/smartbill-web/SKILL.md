@@ -1,6 +1,6 @@
 ---
 name: smartbill-web
-description: Read, issue, rewrite and download invoices on SmartBill via one CLI with two engines - a fast REST API path and a Playwright fallback for what the API cannot do. Use when the user wants to read invoices or payment status, create many similar invoices from one template (e.g. one per training participant), mass-edit the description line of issued invoices, re-download PDFs, record payments, or cancel/storno a document. Trigger on "SmartBill", "facturi", "emite factura", "factura per participant", "cine nu a platit", "regenerate invoice PDFs". Do NOT use for accounting advice or anything outside SmartBill.
+description: "Read, issue, rewrite and download SmartBill invoices via a REST API with a Playwright fallback: payment status, bulk invoices from a template, mass-edit descriptions, re-download PDFs, record payments, storno. Trigger on \"SmartBill\", \"facturi\", \"emite factura\". Not for accounting advice."
 ---
 
 # SmartBill

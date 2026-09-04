@@ -1,6 +1,6 @@
 ---
 name: come-back-when-done
-description: Use when the user asks to be fetched once the work is finished — "come back when done", "come get me when it's ready", "call me when you finish", "let me know when done", „anunță-mă când e gata", „strigă-mă când termini", or the /come-back-when-done command. Clears the terminal off the Retina screen up front so the user can walk away and use that screen, then plays a sound and pulls the terminal back in front of them at the very end of the turn. Do NOT trigger on a mere mention of finishing, only on an actual request to be summoned.
+description: Clears the terminal off-screen so the user can walk away, then plays a sound and brings it back at the end of the turn. Trigger on "come back when done", "let me know when done", „anunță-mă când e gata", or /come-back-when-done — not a mere mention of finishing.
 ---
 
 # Come back when done

@@ -1,6 +1,6 @@
 ---
 name: scribd-to-pdf
-description: Use when the user wants to capture, download, save, or "turn into a PDF" a document hosted on Scribd (scribd.com/document/...). Triggers on Scribd URLs, mentions of Scribd, or requests to screenshot/scrape a Scribd reader into a local file.
+description: Capture, download, or "turn into a PDF" a document hosted on Scribd (scribd.com/document/...). Triggers on Scribd URLs, mentions of Scribd, or requests to screenshot/scrape a Scribd reader.
 ---
 
 # scribd-to-pdf
