@@ -1,6 +1,6 @@
 ---
 name: come-back-when-done
-description: Clears the terminal off-screen so the user can walk away, then plays a sound and brings it back at the end of the turn. Trigger on "come back when done", "let me know when done", „anunță-mă când e gata", or /come-back-when-done — not a mere mention of finishing.
+description: "Clears the terminal, then brings it back with a sound when the turn ends. Only on an explicit request to be summoned: \"come back when done\", \"anunță-mă când e gata\", \"strigă-mă când termini\"."
 ---
 
 # Come back when done

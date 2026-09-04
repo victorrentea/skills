@@ -1,6 +1,6 @@
 ---
 name: smartbill-web
-description: "Read, issue, rewrite and download SmartBill invoices via a REST API with a Playwright fallback: payment status, bulk invoices from a template, mass-edit descriptions, re-download PDFs, record payments, storno. Trigger on \"SmartBill\", \"facturi\", \"emite factura\". Not for accounting advice."
+description: "SmartBill invoice automation — issue, rewrite, download, record payments. Trigger: \"SmartBill\", \"facturi\"."
 ---
 
 # SmartBill

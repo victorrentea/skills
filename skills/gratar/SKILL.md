@@ -1,6 +1,6 @@
 ---
 name: gratar
-description: Interviews the user relentlessly about a plan or design to stress-test it before building. Invoked only via /gratar.
+description: Grills a plan or design before building it. Invoked via /gratar.
 ---
 
 Interview me relentlessly about every aspect of this until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide first your recommended answer.

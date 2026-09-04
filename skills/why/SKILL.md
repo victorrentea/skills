@@ -1,6 +1,6 @@
 ---
 name: why
-description: Explains or audits Claude's own reasoning or a surprising choice in this session, reconstructed from the transcript and chain-of-thought. Trigger on "why did you...", investigating drift, or /why.
+description: "Audits Claude's own reasoning in this session. Trigger: \"why did you...\", /why."
 ---
 
 # Why — explain my own reasoning from the session trace

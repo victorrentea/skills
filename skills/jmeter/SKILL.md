@@ -1,6 +1,6 @@
 ---
 name: jmeter
-description: Create, generate, or run a JMeter load or performance test. Triggers on mentions of JMeter, JMX, load/stress testing, "hit endpoint with N threads", or "call endpoint N times".
+description: "Creates and runs JMeter load/performance tests. Trigger: JMeter, JMX, load/stress testing."
 ---
 
 # JMeter Test Plan Generator
