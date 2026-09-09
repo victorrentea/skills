@@ -23,7 +23,13 @@
  * these do what the API cannot:
  *   npm run sb -- login
  *   npm run sb -- touch [--state f] [--no-save]  -- keep the saved session from ageing out
- *   npm run sb -- list                     -- the ONLY way to enumerate documents
+ *   npm run sb -- list [--from 01/08/2026 --to 31/08/2026] [--json]
+ *                         -- the ONLY way to enumerate documents. Bare, it shows
+ *                            the CURRENT MONTH; --from/--to reach earlier ones.
+ *   npm run sb -- find [--product "Vieira"] [--client Rabobank]
+ *                      [--from dd/mm/yyyy --to dd/mm/yyyy] [--details] [--json]
+ *                         -- search the report; --product matches invoice LINES,
+ *                            so it answers "was this person ever invoiced?"
  *   npm run sb -- copy --template 10000000 --csv rows.csv --out ./out
  *   npm run sb -- edit --csv edits.csv --out ./out
  *   npm run sb -- pdf  --id 10000001 --out ./out [--name INV101.pdf]
@@ -192,14 +198,14 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft'];
+const BROWSER_CMDS = ['login', 'list', 'find', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
   // "no saved session" from open().
   if (!BROWSER_CMDS.includes(cmd)) return false;
   const { open, login, jitter } = await import('./session.js');
-  const { list, createFromTemplate, editDescription, downloadPdf, url, S } = await import('./invoices.js');
+  const { list, report, lineText, createFromTemplate, editDescription, downloadPdf, url, S } = await import('./invoices.js');
   const { setInvoiceClient } = await import('./clients.js');
 
   if (cmd === 'login') { await login(); return true; }
@@ -236,7 +242,37 @@ async function runBrowser(outDir: string): Promise<boolean> {
   const { page, close } = await open({ headless: !has('headed'), cdp: flag('cdp') });
   try {
     if (cmd === 'list') {
+      /* Bare `list` reads whatever period the report happens to be showing -
+       * the CURRENT MONTH unless someone changed it. --from/--to make that
+       * explicit, and are the only way to reach an earlier month. */
+      const from = flag('from'), to = flag('to');
+      if (from && to) {
+        const rows = await report(page, { from, to });
+        if (has('json')) out(rows);
+        else for (const r of rows) console.log(`${r.number}\t${r.id}\t${r.issueDate}\t${r.client}`);
+        return true;
+      }
       for (const inv of await list(page)) console.log(`${inv.number}\t${inv.id}`);
+      return true;
+    }
+
+    /* Answers "was X ever invoiced?" without downloading a single PDF.
+     * --product searches invoice LINES, which on per-participant invoices is
+     * where the name and the order number live. Zero rows is a real answer. */
+    if (cmd === 'find') {
+      const rows = await report(page, {
+        from: flag('from'), to: flag('to'),
+        client: flag('client'), product: flag('product'),
+      });
+      if (has('details')) {
+        for (const r of rows) (r as any).line = await lineText(page, r.id);
+      }
+      if (has('json')) { out(rows); return true; }
+      if (!rows.length) { console.log('no documents match'); return true; }
+      for (const r of rows) {
+        console.log([r.number, r.id, r.issueDate, r.total, r.currency, r.status, r.client]
+          .join('\t') + ((r as any).line ? `\n\t${(r as any).line}` : ''));
+      }
       return true;
     }
 

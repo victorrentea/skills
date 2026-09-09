@@ -9,7 +9,7 @@ One CLI, `npm run sb -- <cmd>`, with **two engines**. Picking the wrong one is t
 main way to waste time here, so start with the table below.
 
 ```bash
-cd "${CLAUDE_PLUGIN_ROOT:-$HOME/workspace/victor-skills}/skills/smartbill"
+cd "${CLAUDE_PLUGIN_ROOT:-$HOME/workspace/victor-skills}/skills/smartbill-web"
 ```
 
 ## Which engine
@@ -129,7 +129,8 @@ appear nowhere in the API.
 |---|---|
 | `sb -- login` | interactive login, saves cookies |
 | `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
-| `sb -- list` | `number<TAB>id` for every invoice in the current report period. **The only source of internal ids.** |
+| `sb -- list [--from dd/mm/yyyy --to dd/mm/yyyy] [--json]` | `number<TAB>id` for every invoice in a period (bare: the **current month**). **The only source of internal ids.** |
+| `sb -- find [--product X] [--client Y] [--from ..] [--to ..] [--details] [--json]` | search the report; `--product` matches invoice **lines**, `--details` prints each line |
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
 | `sb -- pdf --id <id> --out ./out [--name INV101.pdf]` | re-download one PDF by internal id |
@@ -141,6 +142,39 @@ Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
 
 > `copy` was called `create` before the API path existed. `create` now means the
 > API one, which builds an invoice from a JSON payload rather than from a template.
+
+### Searching the report — `find`
+
+"Was this person ever invoiced?" is a report search, not 40 PDF downloads:
+
+```bash
+npm run sb -- find --product "Vieira" --from 01/01/2025 --to 31/12/2026     # -> no documents match
+npm run sb -- find --client Rabobank --from 01/08/2026 --to 31/08/2026 --details
+```
+
+`--product` searches the **line text**, which on per-participant invoices carries
+the name and the order number (`Workshop … for employee Raduan Santos, order
+RAB-425752`). `--client` is the customer name. Zero rows is a real answer — the
+command prints `no documents match` rather than waiting for one to appear.
+
+Three things about that page cost an afternoon each, and are why this is a
+command rather than something to improvise:
+
+- **The period is server-side state, not a URL.** There is no `?from=&to=`. The
+  page holds it in `input.period_filter` (`dd/mm/yyyy - dd/mm/yyyy`) and pushes
+  it with `window.save_interval()`. Navigating to `/raport/facturi/` afterwards
+  **throws the change away** and puts you back on the current month — so read the
+  rows from the page you set it on.
+- **`networkidle` never settles.** Datadog and Survicate beacons keep firing, the
+  wait times out, and you read the table from *before* the filter — an unfiltered
+  listing that looks exactly like "the filter matched everything". `find` waits
+  for the report's own response, then for the row list to stop changing.
+- **Column indexes shift.** Leading checkbox/icon cells move everything along, so
+  rows are read *relative* to the cell holding the document link.
+
+**Always add a positive control.** `--product Vieira` returning nothing means
+"never invoiced" only if `--product Santos` returns his one invoice; without it
+you cannot tell an empty result from a filter that silently did not apply.
 
 ### CSV formats
 
@@ -373,6 +407,10 @@ input events through CDP, so `waitForEvent('download')` works.
 
 ## Rules
 
+- **Script every browser manoeuvre.** Anything worked out by hand against
+  cloud.smartbill.ro — a filter, a period, a field — goes back into this CLI as a
+  command before the task is called done. The selectors and the ajax traps are the
+  expensive part; re-deriving them next time is pure waste.
 - **Issuing, cancelling and deleting touch real fiscal documents.** Confirm client,
   amounts and VAT rate with the user before `create`, `copy`, `storno`, `cancel`
   or `rm`. Pass `"isDraft": true` while details are unsettled.

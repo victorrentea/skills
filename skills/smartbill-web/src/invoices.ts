@@ -45,6 +45,145 @@ export async function list(page: Page): Promise<InvoiceRef[]> {
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * Searching the invoice report                                        *
+ * ------------------------------------------------------------------ */
+
+/* The report shows ONE period at a time and that period is SERVER-SIDE state,
+ * not a query parameter: there is no ?from=&to= to navigate to, and reloading
+ * /raport/facturi/ after setting it in the DOM throws the change away. The page
+ * keeps it in `input.period_filter` ("dd/mm/yyyy - dd/mm/yyyy") and pushes it to
+ * the server through window.save_interval(). Set both, then WAIT - the table
+ * redraws by ajax; a reload at this point resets you to the current month. */
+export async function setPeriod(page: Page, from: string, to: string): Promise<string> {
+  await page.evaluate(
+    `(function(){ var e = document.querySelector('input.period_filter');
+       if (!e) throw new Error('no period filter on this page');
+       e.value = ${JSON.stringify(`${from} - ${to}`)}; window.save_interval(); })()`
+  );
+  const want = `${from} - ${to}`;
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const now = await page.evaluate<string>(`(document.querySelector('input.period_filter')||{}).value || ''`);
+    // save_interval() normalises spacing; compare on the dates alone.
+    if (now.replace(/\s/g, '') === want.replace(/\s/g, '')) break;
+    if (Date.now() > deadline) throw new Error(`report period did not take: wanted ${want}, page says ${now}`);
+    await new Promise(r => setTimeout(r, 250));
+  }
+  // The dates land in the input before the table finishes redrawing.
+  await page.waitForLoadState('networkidle').catch(() => {});
+  return want;
+}
+
+export interface ReportRow {
+  number: string; id: string; client: string;
+  issueDate: string; dueDate: string;
+  net: string; vat: string; total: string; currency: string; status: string;
+}
+
+const FILTER = {
+  client: '#client_name2',      // customer name, substring
+  product: '#product_name',     // matches the LINE text, which is where the
+                                // participant name lives on these invoices
+  submit: '#advanced_filter',
+};
+
+/** Run the report's advanced filter and read the rows back.
+ *  `product` searches invoice LINES - that is how you find one participant. */
+export async function report(
+  page: Page,
+  opts: { from?: string; to?: string; client?: string; product?: string } = {}
+): Promise<ReportRow[]> {
+  await page.goto(url.report, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector(S.invoiceLink, { timeout: 30_000 });
+  if (opts.from && opts.to) await setPeriod(page, opts.from, opts.to);
+
+  await page.evaluate(
+    `(function(){
+       var c = document.querySelector(${JSON.stringify(FILTER.client)});
+       var p = document.querySelector(${JSON.stringify(FILTER.product)});
+       if (c) c.value = ${JSON.stringify(opts.client ?? '')};
+       if (p) p.value = ${JSON.stringify(opts.product ?? '')};
+     })()`
+  );
+  /* The table is a DataTable redrawn by ajax. Waiting on 'networkidle' does NOT
+   * work here - datadog and survicate beacons keep the network busy, the wait
+   * times out, and the rows read back are the ones from BEFORE the filter: an
+   * unfiltered listing that looks exactly like "the filter matched everything".
+   * Wait for the report's own response, then for the table to stop changing. */
+  await Promise.all([
+    page.waitForResponse(r => /\/raport\/facturi/.test(r.url()), { timeout: 30_000 }).catch(() => null),
+    page.evaluate(`document.querySelector(${JSON.stringify(FILTER.submit)}).click()`),
+  ]);
+  await settleTable(page);
+
+  /* Zero hits is a legitimate answer ("this participant was never invoiced"),
+   * so this must not wait for a row to appear. */
+  return readRows(page);
+}
+
+/** Poll until the results table stops changing. */
+async function settleTable(page: Page, quietMs = 1_200, timeoutMs = 30_000): Promise<void> {
+  const sig = () => page.evaluate<string>(
+    `[...document.querySelectorAll('a[href^="/raport/factura/"]')].map(a => a.textContent.trim()).join(',')`
+  ).catch(() => '');
+  const deadline = Date.now() + timeoutMs;
+  let last = await sig(), quietSince = Date.now();
+  for (;;) {
+    await new Promise(r => setTimeout(r, 250));
+    const now = await sig();
+    if (now !== last) { last = now; quietSince = Date.now(); }
+    else if (Date.now() - quietSince >= quietMs) return;
+    if (Date.now() > deadline) return;
+  }
+}
+
+/* Column positions shift with the leading checkbox/icon cells, so the row is
+ * read RELATIVE to the cell holding the document link rather than by fixed
+ * indexes. */
+async function readRows(page: Page): Promise<ReportRow[]> {
+  return JSON.parse(await page.evaluate<string>(`JSON.stringify(
+    [...document.querySelectorAll('a[href^="/raport/factura/"]')]
+      .map(function (a) {
+        var td = a.closest('td'), r = a.closest('tr');
+        if (!td || !r) return null;
+        var cells = [...r.querySelectorAll('td')].map(function (t) {
+          return (t.innerText || '').replace(/\\s+/g, ' ').trim();
+        });
+        var i = cells.indexOf(td.innerText.replace(/\\s+/g, ' ').trim());
+        if (i < 0) i = 2;
+        return {
+          number: (a.textContent || '').trim(),
+          id: (a.getAttribute('href') || '').split('/').filter(Boolean).pop(),
+          client: cells[i + 1] || '', issueDate: cells[i + 2] || '', dueDate: cells[i + 3] || '',
+          net: cells[i + 4] || '', vat: cells[i + 5] || '', total: cells[i + 6] || '',
+          currency: cells[i + 7] || '', status: cells[i + 9] || cells[i + 8] || '',
+        };
+      })
+      .filter(Boolean)
+      .filter(function (x, i, all) { return all.findIndex(function (y) { return y.id === x.id; }) === i; })
+  )`));
+}
+
+/** The line text of one document, read off its view page.
+ *  The report lists totals only; the participant and order number are in here. */
+export async function lineText(page: Page, id: string | number): Promise<string> {
+  await page.goto(url.view(id), { waitUntil: 'domcontentloaded' });
+  /* The document body arrives after the page chrome. Without this poll the
+   * regex below runs against the navigation menu and returns it verbatim. */
+  const deadline = Date.now() + 20_000;
+  let txt = '';
+  for (;;) {
+    txt = await page.evaluate<string>(`document.body.innerText.replace(/\\s+/g, ' ')`);
+    if (/\bbuc\b/.test(txt) || Date.now() > deadline) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  /* Squeeze whitespace before matching: the viewer wraps long lines, so
+   * "RAB-425628" comes back as "RAB- 425628" and a strict match misses. */
+  const m = txt.match(/(?:Workshop|Training|Curs|One-day|Consultanta|Consulting)[^|]{0,240}?(?=\s+buc\b|\s+Exchange rate)/i);
+  return (m ? m[0] : txt.slice(0, 200)).trim();
+}
+
 /** Replace the description of line 1. Assumes the invoice form page is open. */
 async function setLineDescription(page: Page, description: string) {
   await page.waitForSelector(S.editPencil, { timeout: 30_000 });
