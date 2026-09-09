@@ -30,6 +30,11 @@
  *                      [--from dd/mm/yyyy --to dd/mm/yyyy] [--details] [--json]
  *                         -- search the report; --product matches invoice LINES,
  *                            so it answers "was this person ever invoiced?"
+ *   npm run sb -- issue --template <id> --desc "..." --price 31525.00
+ *                       [--qty 1] [--term "60 de zile"] [--dry-run]
+ *                         -- issue a NEW invoice off an existing one, changing
+ *                            the line AND the price. The only path left since
+ *                            this subscription dropped API issuing.
  *   npm run sb -- copy --template 10000000 --csv rows.csv --out ./out
  *   npm run sb -- edit --csv edits.csv --out ./out
  *   npm run sb -- pdf  --id 10000001 --out ./out [--name INV101.pdf]
@@ -198,14 +203,14 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'find', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft'];
+const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
   // "no saved session" from open().
   if (!BROWSER_CMDS.includes(cmd)) return false;
   const { open, login, jitter } = await import('./session.js');
-  const { list, report, lineText, createFromTemplate, editDescription, downloadPdf, url, S } = await import('./invoices.js');
+  const { list, report, lineText, issueFromTemplate, finalizeDraft, createFromTemplate, editDescription, downloadPdf, url, S } = await import('./invoices.js');
   const { setInvoiceClient } = await import('./clients.js');
 
   if (cmd === 'login') { await login(); return true; }
@@ -350,6 +355,36 @@ async function runBrowser(outDir: string): Promise<boolean> {
         bodyStart: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 300)
       })`;
       out(await page.evaluate(expr));
+      return true;
+    }
+
+    /* Issue a new invoice off an existing one. The API's `create` is gone on
+     * this subscription, so this is the only path left for a NEW document whose
+     * price differs from the template's. */
+    if (cmd === 'issue') {
+      const opts = {
+        template: need('template'), description: need('desc'), price: need('price'),
+        qty: flag('qty'), term: flag('term'), dryRun: has('dry-run'),
+      };
+      const { staged } = await issueFromTemplate(page, opts);
+      if (opts.dryRun) { out({ dryRun: true, staged }); return true; }
+      /* Verify from the REPORT, not from the form that was just driven. */
+      const today = new Date();
+      const dd = String(today.getDate()).padStart(2, '0');
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const stamp = `${dd}/${mm}/${today.getFullYear()}`;
+      const rows = (await report(page, { from: stamp, to: stamp }))
+        .filter(r => r.issueDate === stamp);
+      out({ staged, issuedToday: rows });
+      return true;
+    }
+
+    /* `issue` leaves an unnumbered draft; this is what numbers it. */
+    if (cmd === 'finalize') {
+      const id = need('id');
+      await finalizeDraft(page, id);
+      const rows = await report(page, { from: flag('from'), to: flag('to') });
+      out({ finalized: id, row: rows.find(r => r.id === id) ?? null });
       return true;
     }
 

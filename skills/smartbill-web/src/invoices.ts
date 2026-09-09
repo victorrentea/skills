@@ -1,6 +1,6 @@
 import type { Page } from 'playwright';
 import { BASE, jitter } from './session.js';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /* ------------------------------------------------------------------ *
@@ -246,10 +246,36 @@ async function saveDocument(page: Page, opts: { strict?: boolean } = {}): Promis
   }
 }
 
-/** Download the PDF of the currently open invoice into `dir`. */
+/** Download the PDF of the currently open invoice into `dir`.
+ *
+ * `#viewer_pdf_id` moved OUT of the compact-view iframe and into the main
+ * document, where it is a plain anchor to /documente/pdf/factura/<id>/. When it
+ * is an anchor, fetch the href through the page's request context: that reuses
+ * the session cookies and sidesteps the whole download-event dance (a
+ * programmatic click carries no user activation, so Chrome refuses the save
+ * silently - which is why this used to need a real Playwright click). */
 export async function downloadPdf(page: Page, dir: string, filename?: string): Promise<string> {
   mkdirSync(dir, { recursive: true });
-  const pdfBtn = viewer(page).locator(S.exportPdf);
+
+  const main = page.locator('#viewer_pdf_id').first();
+  const inFrame = viewer(page).locator(S.exportPdf);
+  const anchor = (await main.count()) ? main : null;
+  const href = anchor ? await anchor.getAttribute('href').catch(() => null) : null;
+
+  if (href) {
+    const res = await page.request.get(new URL(href, BASE).toString());
+    if (!res.ok()) throw new Error(`PDF fetch failed: HTTP ${res.status()}`);
+    const bytes = await res.body();
+    if (bytes.slice(0, 5).toString() !== '%PDF-') {
+      throw new Error(`not a PDF (${bytes.length} bytes) - the session may be stale`);
+    }
+    const target = resolve(dir, filename ?? `${href.split('/').filter(Boolean).pop()}.pdf`);
+    writeFileSync(target, bytes);
+    return target;
+  }
+
+  // Older layout: the icon lives inside the viewer iframe and only a real click works.
+  const pdfBtn = anchor ?? inFrame;
   await pdfBtn.waitFor({ timeout: 30_000 });
   const [dl] = await Promise.all([
     page.waitForEvent('download', { timeout: 60_000 }),
@@ -279,4 +305,121 @@ export async function editDescription(
   await setLineDescription(page, description);
   await jitter();
   await saveDocument(page);
+}
+
+/* ------------------------------------------------------------------ *
+ * Issuing through the UI                                              *
+ * ------------------------------------------------------------------ */
+
+/* Since Sep 2026 this account's subscription no longer includes API issuing
+ * ("Abonamentul tau nu include emiteri prin API" on /core/integrari/ - it is a
+ * Platinum/eCommerce feature, NOT a stale token), so `create` is unavailable and
+ * a document can only be issued by driving the emitere form. `copy` inherits the
+ * client, series, currency, VAT rate and UM from a template invoice; this goes
+ * one step further and also sets the PRICE and the payment term, which is what
+ * separates "same workshop again" from a real new invoice. */
+export const ISSUE = {
+  paymentTerm: '#payment_term_select',
+  dueDay: '#due_day', dueMonth: '#due_month', dueYear: '#due_year',
+  modalPrice: '#edit_product_price',
+  modalApply: '#editBtn',                  // "Modifica produs"
+};
+
+export interface IssueOpts {
+  template: string | number;
+  description: string;
+  price: string;                 // net unit price, as typed into the form
+  qty?: string;
+  term?: string;                 // payment term label, e.g. "60 de zile"
+  dryRun?: boolean;
+}
+
+export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ staged: string }> {
+  await page.goto(url.copy(o.template), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector(S.editPencil, { timeout: 30_000 });
+
+  if (o.term) {
+    /* The term drives the due date, so setting it by label is safer than typing
+     * three date boxes and hoping the hidden due_date follows. selectOption
+     * dispatches a real change event; assigning .value would not. */
+    await page.selectOption(ISSUE.paymentTerm, { label: o.term });
+  }
+
+  await page.click(S.editPencil);
+  const name = page.locator(S.modalName);
+  await name.waitFor({ state: 'visible', timeout: 15_000 });
+  await name.fill(o.description);
+  const desc = page.locator(S.modalDesc);
+  if (await desc.count()) await desc.first().fill('');    // never leave a stray BT-154
+  const price = page.locator(ISSUE.modalPrice);
+  await price.fill(o.price);
+  /* The modal recomputes VAT and total from the price on blur, not on input.
+   * Applying without it saves the OLD total against the NEW price. */
+  await price.press('Tab');
+  if (o.qty) await page.locator('#edit_product_quantity').fill(o.qty);
+  await page.locator(ISSUE.modalApply).click();
+  await name.waitFor({ state: 'hidden', timeout: 15_000 });
+
+  /* Verify against the LINE ROW, before saving: the modal is reset once closed,
+   * so reading it back would report blanks for a change that did land. */
+  const row = await page.evaluate<string>(
+    `(function(){ var a = document.querySelector('a.emitere_edit');
+       var p = a && (a.closest('tr') || a.parentElement.parentElement);
+       return p ? p.innerText.replace(/\\s+/g, ' ').trim() : ''; })()`
+  );
+  const needle = o.description.slice(-30).replace(/\s+/g, ' ').trim();
+  if (!row.includes(needle)) throw new Error(`line did not take the description: ${row}`);
+  if (!row.replace(/\s/g, '').includes(o.price.replace(/\s/g, ''))) {
+    throw new Error(`line did not take the price ${o.price}: ${row}`);
+  }
+
+  const totals = await page.evaluate<string>(
+    `JSON.stringify({ net: (document.querySelector('#total_value_input')||{}).value,
+                      vat: (document.querySelector('#total_vat_input')||{}).value,
+                      total: (document.querySelector('#total_input')||{}).value,
+                      due: [(document.querySelector('#due_day')||{}).value,
+                            (document.querySelector('#due_month')||{}).value,
+                            (document.querySelector('#due_year')||{}).value].join('/') })`
+  );
+  const staged = `${row} | ${totals}`;
+  if (o.dryRun) return { staged };
+
+  await page.click(S.saveInvoice);
+  /* What follows the save moved once already (the old #view_save_disposition in
+   * the compact-view iframe is gone), so react to whatever shows up rather than
+   * insisting on one selector: either the success notice, or a confirm button
+   * in the viewer. */
+  const deadline = Date.now() + 45_000;
+  for (;;) {
+    const done = await page.locator('text=/salvat cu succes/i').count().catch(() => 0);
+    if (done) break;
+    const confirm = viewer(page).locator(S.confirmSave);
+    if (await confirm.isVisible().catch(() => false)) { await confirm.click().catch(() => {}); }
+    if (Date.now() > deadline) throw new Error('no confirmation after saving - check the report before retrying, a document may exist');
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return { staged };
+}
+
+/* Turn the unnumbered DRAFT that `issue` leaves behind into an issued document.
+ *
+ * Saving the emitere form no longer finishes the job: it lands a "Ciorna" with
+ * number "S" and no fiscal number. The control that finalises it is NOT the old
+ * #view_save_disposition inside the compact-view iframe (that one is gone) - it
+ * is `#viewer_save_id` ("Salveaza") on the document's own view page, in the MAIN
+ * document. The page's iframe has the SAME src as the page, which is why looking
+ * inside frames for it finds nothing. */
+export async function finalizeDraft(page: Page, id: string | number): Promise<void> {
+  await page.goto(url.view(id), { waitUntil: 'domcontentloaded' });
+  const btn = page.locator('#viewer_save_id');
+  await btn.waitFor({ state: 'visible', timeout: 30_000 });
+  await btn.click();
+  /* The verdict is the document losing its draft status, not the click. */
+  const deadline = Date.now() + 45_000;
+  for (;;) {
+    const txt = await page.evaluate<string>(`document.body.innerText.replace(/\\s+/g, ' ')`).catch(() => '');
+    if (/salvat cu succes/i.test(txt) || !(await page.locator('#viewer_save_id').isVisible().catch(() => false))) break;
+    if (Date.now() > deadline) throw new Error(`draft ${id} still shows the Salveaza button - it was not finalised`);
+    await new Promise(r => setTimeout(r, 500));
+  }
 }

@@ -19,8 +19,14 @@ cd "${CLAUDE_PLUGIN_ROOT:-$HOME/workspace/victor-skills}/skills/smartbill-web"
 | **API** | REST on `ws.smartbill.ro` | ~200 ms/call | token in `~/.claude/smartbill.env` |
 | **Browser** | Playwright on `cloud.smartbill.ro` | ~1.6 s/invoice + browser start | `sb -- login` once |
 
-**Default to the API.** Fall back to the browser only for the three things the
-API genuinely cannot do:
+> **API issuing is OFF on this subscription since Sep 2026.** Every REST call
+> answers `Nu aveti acces la API-ul SmartBill`, and `/core/integrari/` spells out
+> why: *"Abonamentul tau nu include emiteri prin API"* - it is a Platinum feature.
+> **This is not a stale token; regenerating it changes nothing.** Until the plan
+> is upgraded everything goes through the browser: issue with `issue` + `finalize`.
+
+**Default to the API** *(when the plan allows it)*. Fall back to the browser only
+for the things the API genuinely cannot do:
 
 | Need | Why the API can't | Use |
 |---|---|---|
@@ -131,6 +137,8 @@ appear nowhere in the API.
 | `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
 | `sb -- list [--from dd/mm/yyyy --to dd/mm/yyyy] [--json]` | `number<TAB>id` for every invoice in a period (bare: the **current month**). **The only source of internal ids.** |
 | `sb -- find [--product X] [--client Y] [--from ..] [--to ..] [--details] [--json]` | search the report; `--product` matches invoice **lines**, `--details` prints each line |
+| `sb -- issue --template <id> --desc "..." --price 31525.00 [--qty 1] [--term "60 de zile"] [--dry-run]` | issue a **new** invoice off an existing one, changing the line **and** the price |
+| `sb -- finalize --id <id>` | turn the unnumbered draft `issue` leaves into an issued, numbered document |
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
 | `sb -- pdf --id <id> --out ./out [--name INV101.pdf]` | re-download one PDF by internal id |
@@ -142,6 +150,46 @@ Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
 
 > `copy` was called `create` before the API path existed. `create` now means the
 > API one, which builds an invoice from a JSON payload rather than from a template.
+
+### Issuing without the API — `issue` + `finalize`
+
+Two commands, because SmartBill's save is two steps:
+
+```bash
+npm run sb -- issue --template 42899862 --term "60 de zile" --price 31525.00 \
+  --desc "AI Agentic Engineering Workshop, 31 aug - 1 sep 2026, PO 4200457254, PR621179" \
+  --dry-run                                  # stage it, print the line and the totals
+npm run sb -- issue --template 42899862 ...  # without --dry-run: creates a DRAFT
+npm run sb -- finalize --id 51466639         # -> S328, status Emisa
+npm run sb -- pdf --id 51466639 --out ~/Downloads --name S328.pdf
+```
+
+`issue` copies a template invoice — inheriting client, series, currency, VAT rate
+and UM — then rewrites the line description **and the unit price**, and sets the
+payment term by its label (`"60 de zile"`), which is what moves the due date.
+`copy` cannot do the price, and that is usually the whole point of a new invoice.
+
+**Always `--dry-run` first.** It stops before saving and prints the staged line
+plus `{net, vat, total, due}` read off the form — one look confirms the VAT rate
+and the due date before a fiscal document exists.
+
+Details that each cost a failed run:
+
+- **The price recomputes on blur, not on input.** Filling `#edit_product_price`
+  and clicking *Modifica produs* straight away applies the OLD total to the NEW
+  price. `issue` presses Tab first.
+- **Saving the form does NOT issue the document.** It lands a `Ciorna` numbered
+  plain `S`, with no fiscal number — the state `rmdraft` was written for.
+- **The finalise button is `#viewer_save_id` ("Salveaza") on the document's own
+  view page, in the MAIN document.** The old `#view_save_disposition` inside
+  `iframe[src*=compact-view]` is gone, and so is that iframe: the one on the view
+  page has the *same src as the page*, so hunting through frames finds nothing.
+  `#viewer_pdf_id` made the same journey — it is now a plain anchor to
+  `/documente/pdf/factura/<id>/`, which `pdf` fetches through the page's request
+  context instead of clicking (a programmatic click carries no user activation,
+  so Chrome refuses the download silently).
+- **Verify from the report, never from the form you drove.** `issue` and
+  `finalize` both re-read the row and print `number`, `total` and `status`.
 
 ### Searching the report — `find`
 
