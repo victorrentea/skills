@@ -283,3 +283,106 @@ export function reconcile(txs: BankTx[], exps: Expense[], opts: { windowDays?: n
     unmatchedExpenses: open.filter(e => !matchedDoc.has(e.docId)),
   };
 }
+
+/* ------------------------------------------------------- platform payments */
+
+export interface Basket {
+  txId: number;
+  txDate: string;
+  txAmount: number;
+  txDetails: string;
+  eposDate: string | null;
+  items: Expense[];
+  sum: number;
+  diff: number;          // txAmount - sum; 0 means the basket closes exactly
+  exact: boolean;
+}
+
+/** "EPOS 22/07/2026 ..." - when the order was actually placed, which is what the
+ *  supplier invoices are dated against. The settlement date is 1-3 days later. */
+export const eposOf = (details: string): string | null =>
+  /\bE?POS\s+(\d{2}\/\d{2}\/\d{4})/.exec(details)?.[1] ?? null;
+
+const dayDiff = (a: string, b: string) =>
+  Math.round((parseRo(a).getTime() - parseRo(b).getTime()) / 86_400_000);
+
+/**
+ * One card payment to a delivery platform is NOT one invoice. Glovo invoices only
+ * its own fees (taxa de livrare, service fee); the food is invoiced by the
+ * restaurant, separately, into SPV. So the payment closes against a BASKET:
+ * typically one GLOVOAPPRO fee invoice plus one restaurant invoice, dated around
+ * the order date rather than the settlement date.
+ *
+ * Hence subset-sum rather than the 1:1 match `reconcile` does. Baskets are capped
+ * at `maxItems` because the search is exponential and, more importantly, because
+ * a four-way coincidence of small amounts is far more likely to be arithmetic
+ * than a real order.
+ */
+export function baskets(
+  txs: BankTx[],
+  exps: Expense[],
+  opts: { platform?: RegExp; before?: number; after?: number; maxItems?: number; tolerance?: number } = {},
+): { closed: Basket[]; open: Basket[]; leftover: Expense[] } {
+  const platform = opts.platform ?? /glovo/i;
+  const before = opts.before ?? 3;     // invoice may predate the order date slightly
+  const after = opts.after ?? 6;       // ...and usually trails it by a day or two
+  const maxItems = opts.maxItems ?? 3;
+  const tol = opts.tolerance ?? 0.005;
+
+  const pays = txs
+    .filter(t => t.paid > 0 && platform.test(t.details))
+    .sort((a, b) => parseRo(a.date).getTime() - parseRo(b.date).getTime());
+
+  const pool = exps.filter(e => e.remaining > 0.005);
+  const used = new Set<number>();
+  const closed: Basket[] = [];
+  const openB: Basket[] = [];
+
+  for (const t of pays) {
+    const anchor = eposOf(t.details) ?? t.date;
+    const cands = pool
+      .filter(e => !used.has(e.docId) && e.currency === 'RON')
+      .filter(e => { const d = dayDiff(e.date, anchor); return d >= -before && d <= after; })
+      .sort((a, b) => Math.abs(dayDiff(a.date, anchor)) - Math.abs(dayDiff(b.date, anchor)));
+
+    /* Depth-first over at most maxItems invoices. Scored, not just found: a
+     * basket that pairs the platform's own fee invoice with a merchant invoice
+     * is the shape we expect, so it outranks an equal-summing pile of fees. */
+    let best: { items: Expense[]; diff: number; score: number } | null = null;
+    const consider = (items: Expense[]) => {
+      const sum = items.reduce((a, e) => a + e.remaining, 0);
+      const diff = +(t.paid - sum).toFixed(2);
+      /* Every order produces a fee invoice from the platform itself, so a basket
+       * without one is not an order - it is arithmetic. Requiring it is what
+       * stops the search pairing a Glovo payment with a bookshop and an energy
+       * bill that happen to add up. */
+      const hasPlatform = items.some(e => platform.test(e.supplier));
+      if (!hasPlatform) return;
+      const hasOther = items.some(e => !platform.test(e.supplier));
+      const score = (Math.abs(diff) <= tol ? 100 : 0)
+        + (hasOther ? 20 : 0)
+        - items.length
+        - Math.abs(diff);
+      if (!best || score > best.score) best = { items: [...items], diff, score };
+    };
+    const walk = (start: number, items: Expense[]) => {
+      if (items.length) consider(items);
+      if (items.length >= maxItems) return;
+      for (let i = start; i < cands.length; i++) walk(i + 1, [...items, cands[i]]);
+    };
+    walk(0, []);
+
+    if (!best) continue;
+    const b = best as { items: Expense[]; diff: number; score: number };
+    const basket: Basket = {
+      txId: t.id, txDate: t.date, txAmount: t.paid, txDetails: t.details,
+      eposDate: eposOf(t.details),
+      items: b.items, sum: +b.items.reduce((a, e) => a + e.remaining, 0).toFixed(2),
+      diff: b.diff, exact: Math.abs(b.diff) <= tol,
+    };
+    if (basket.exact) { basket.items.forEach(e => used.add(e.docId)); closed.push(basket); }
+    else openB.push(basket);
+  }
+
+  return { closed, open: openB, leftover: pool.filter(e => !used.has(e.docId)) };
+}

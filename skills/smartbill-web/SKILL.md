@@ -317,6 +317,36 @@ acolo, nu trei pasi mai tarziu ca plata gresita.
 Bancile retiparesc numarul de factura fara zerouri (`AS001183` platit cu referinta
 `as 1183`), deci potrivirea pe numar incearca si coada numerica fara padding.
 
+### `glovo` - cosuri de facturi pentru o plata de platforma
+
+O plata cu cardul catre o platforma de livrare nu e o factura, ci un **cos**:
+factura de taxe a platformei plus factura restaurantului. De aici subset-sum, nu
+potrivirea 1:1 din `reconcile`:
+
+```bash
+npm run sb -- glovo --from 01/07/2026 --to 31/07/2026 \
+  --exp-from 01/06/2026 --exp-to 15/09/2026 --before 5 --after 12 \
+  --statement "$HOME/My Drive/Conta/2026-07/Statements_RO65...PDF"
+```
+
+`--platform` schimba regexul (implicit `glovo`), `--max-items` marimea cosului
+(3), `--before`/`--after` fereastra fata de **data EPOS** a comenzii, nu fata de
+data decontarii.
+
+Doua reguli care tin cautarea onesta:
+
+- **Cosul trebuie sa contina o factura a platformei.** Orice comanda produce una;
+  un cos fara ea nu e o comanda, e aritmetica. Fara regula asta, cautarea
+  cupleaza o plata Glovo cu o librarie si o factura de curent care se intampla sa
+  dea suma buna.
+- **Aproximarile sunt oprite implicit** (`--near 0`). Cu ~120 de facturi
+  candidate, subseturile de 3 sunt sute de mii pe un interval de cateva mii de
+  lei: sa nimeresti la un leu de orice tinta e practic garantat. Un rezultat
+  „aproape" nu e o pista, e zgomot.
+
+Rulat pe iunie-august 2026, cu fereastra larga si cos de 3: **zero plati inchise
+exact**. Nu e un prag de reglat - vezi mai jos de ce.
+
 ### Glovo nu se cupleaza 1:1, si nu e o problema de algoritm
 
 Verificat pe e-factura preluata din SPV (`/network/viewer/anaf/<extdocId>/`):
@@ -333,6 +363,18 @@ Nici pe data nu se rezolva: data facturii vine la ~2 zile dupa data EPOS a
 comenzii, dar numaratoarea pe zi nu se inchide (EPOS 22/07 are 3 comenzi, 24/07
 are 3 facturi, dar EPOS 29/07 are 3 si 31/07 are 4). Sunt mai multe facturi decat
 plati, deci pairing-ul pe comanda nu e reconstruibil din datele astea.
+
+Nici pe identificatori nu e nimic de legat, verificat in datele reale:
+
+| unde | ce contine |
+|---|---|
+| textul tranzactiei | `Glovo BUCURESTI RO`, `TID:99999999`, terminal `498750000260290` - identic la toate. Doar RRN, suma si data EPOS |
+| factura GLOVOAPPRO | doar liniile de taxe. Niciun numar de comanda |
+| factura restaurantului | doar produsele (`Pizza Suprema`, `Eco Taxa`, `Discount`). Niciun numar de comanda |
+
+Deci nu exista cheie comuna: raman suma si data, iar sumele nu se inchid. (BT a
+tiparit candva un cod de comerciant - `Glovo 16APR BULFS41GR` in aprilie 2026 -
+dar pana in iulie disparuse.)
 
 Ce ramane e o decizie de contabilitate, nu de automatizare: fie se sparge fiecare
 plata Glovo intre factura de taxe si restul (mancare, fara factura de la
