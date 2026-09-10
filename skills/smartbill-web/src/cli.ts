@@ -203,7 +203,8 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft'];
+const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft',
+  'expenses', 'banktx', 'ibans', 'reconcile'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
@@ -242,6 +243,59 @@ async function runBrowser(outDir: string): Promise<boolean> {
       if (!alive) process.exitCode = 1;
       return true;
     } finally { await close(); }
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Cheltuieli / extras de cont. These three reports are JSON endpoints
+   * behind a Vue front-end, so they need the signed-in cookie jar but no
+   * clicking - `acq` replays the POST the page makes.
+   * ---------------------------------------------------------------- */
+  if (['expenses', 'banktx', 'ibans', 'reconcile'].includes(cmd)) {
+    const acq = await import('./acquisitions.js');
+    const s = await open({ headless: !has('headed'), cdp: flag('cdp') });
+    try {
+      const period = () => ({ from: need('from'), to: need('to') });
+
+      if (cmd === 'ibans') { out(await acq.ibans(s)); return true; }
+
+      if (cmd === 'expenses') {
+        let rows = await acq.expenses(s, period());
+        if (has('unpaid')) rows = rows.filter(r => r.remaining > 0.005);
+        if (flag('supplier')) {
+          const q = acq.norm(flag('supplier')!);
+          rows = rows.filter(r => acq.norm(r.supplier).includes(q));
+        }
+        if (has('json')) out(rows);
+        else for (const r of rows)
+          console.log(`${r.date}  ${r.doc.padEnd(24)} ${r.supplier.slice(0, 32).padEnd(32)} ${r.total.toFixed(2).padStart(10)} ${r.currency}  rest ${r.remaining.toFixed(2).padStart(9)}  ${r.status}`);
+        return true;
+      }
+
+      if (cmd === 'banktx') {
+        const iban = Number(flag('iban') ?? (await acq.ibans(s))[0].id);
+        let rows = await acq.bankTx(s, { ...period(), iban });
+        if (has('out-only')) rows = rows.filter(r => r.paid > 0);
+        if (has('in-only')) rows = rows.filter(r => r.received > 0);
+        if (has('unprocessed')) rows = rows.filter(r => !r.processed);
+        if (has('json')) out(rows);
+        else for (const r of rows)
+          console.log(`${r.date}  ${(r.paid ? '-' + r.paid.toFixed(2) : '+' + r.received.toFixed(2)).padStart(12)}  ${r.processed ? 'procesata  ' : 'NEprocesata'}  ${r.details.replace(/\s+/g, ' ').slice(0, 90)}`);
+        return true;
+      }
+
+      // reconcile
+      const iban = Number(flag('iban') ?? (await acq.ibans(s))[0].id);
+      const [txs, exps] = await Promise.all([
+        acq.bankTx(s, { ...period(), iban }),
+        acq.expenses(s, { from: flag('exp-from') ?? need('from'), to: need('to') }),
+      ]);
+      const r = acq.reconcile(txs, exps, { windowDays: Number(flag('window') ?? 60) });
+      if (has('json')) { out(r); return true; }
+      console.log(`${r.matches.length} potriviri, ${r.unmatchedTx.length} plati necuplate, ${r.unmatchedExpenses.length} cheltuieli neplatite\n`);
+      for (const m of r.matches)
+        console.log(`[${String(m.score).padStart(3)}] ${m.txDate} -${m.txAmount.toFixed(2).padStart(9)}  ->  ${m.doc} (${m.supplier})  docId=${m.docId} txId=${m.txId}${m.ambiguous ? `  AMBIGUU(+${m.ambiguous})` : ''}\n       ${m.why.join(' | ')}\n       extras: ${m.txDetails.replace(/\s+/g, ' ').slice(0, 110)}`);
+      return true;
+    } finally { await s.close(); }
   }
 
   const { page, close } = await open({ headless: !has('headed'), cdp: flag('cdp') });

@@ -34,6 +34,7 @@ for the things the API genuinely cannot do:
 | **Edit an issued invoice** | No update endpoint exists. The API can only create, cancel, storno or delete. | `sb -- edit` (browser) |
 | **Copy an existing invoice** | No "duplicate document" endpoint. `create` needs the full client + line payload spelled out. | `sb -- copy` (browser) |
 | **Change the customer on an issued invoice** | No update endpoint, and the client endpoints are read-only. | `sb -- reclient` (browser) |
+| **Read expenses / bank statements** | The whole *Cheltuieli* and *Tranzactii bancare* side lives only in the web app; `ws.smartbill.ro` knows nothing about it. | `sb -- expenses`, `sb -- banktx`, `sb -- reconcile` |
 
 Everything else — reading a document, payment status, PDFs, issuing, payments,
 cancel/storno/delete, emailing — goes through the API.
@@ -223,6 +224,72 @@ command rather than something to improvise:
 **Always add a positive control.** `--product Vieira` returning nothing means
 "never invoiced" only if `--product Santos` returns his one invoice; without it
 you cannot tell an empty result from a filter that silently did not apply.
+
+## Cheltuieli si extras de cont
+
+Three reports the API cannot see at all. All three are Vue front-ends over plain
+JSON POST endpoints, so these commands **do not click anything** - they replay
+the page's own POST through the signed-in cookie jar. ~200 ms per report instead
+of ~6 s of page boot, and the rows arrive as data rather than as scraped cells.
+
+| Command | What it does |
+|---|---|
+| `sb -- ibans` | the bank accounts, with the `id` the next two commands take |
+| `sb -- expenses --from dd/mm/yyyy --to dd/mm/yyyy [--unpaid] [--supplier X] [--json]` | the *Cheltuieli* report: supplier, document, total, paid, remaining, status |
+| `sb -- banktx --from .. --to .. [--iban <id>] [--out-only\|--in-only] [--unprocessed] [--json]` | the bank statement rows |
+| `sb -- reconcile --from .. --to .. [--iban <id>] [--window 60] [--json]` | proposes (payment -> expense) pairs, scored |
+
+```bash
+npm run sb -- ibans                       # 27842 LEI, 27843 EUR, 128690 USD, ...
+npm run sb -- reconcile --iban 27842 --from 01/02/2026 --to 31/05/2026
+```
+
+Endpoints, since they are nowhere in any documentation:
+
+| Report | POST |
+|---|---|
+| Cheltuieli | `/achizitii/raport/documente_furnizori/v2/ajax/` — `sSearch={from,to,documentType,page,resultsPerPage}` |
+| Tranzactii bancare | `/raport/raport_extrase_v2/ajax/` — `sSearch={from,to,iban,page,results_per_page,transaction_status[],synced}` |
+| Situatia platilor | `/achizitii/raport/plati_la_furnizori/ajax/` — per-supplier balances |
+
+They are Django views: the POST needs the `csrftoken` cookie echoed back in
+**`X-CSRFToken`**, or the answer is a 403 HTML page that `JSON.parse` reports as
+"Unexpected token <".
+
+### How the matching scores
+
+Amount is non-negotiable: a payment is only ever offered against an expense whose
+**remaining** amount it settles exactly (±0.005). Name similarity never
+compensates for a wrong amount - a wrong amount is a wrong payment record.
+
+On top of that, 45 base + 35 if the supplier name appears in the statement text
++ 20 if the document number does + 5 if it landed within 14 days. So:
+
+- **85–100** — amount *and* name (or number) agree. Safe to post.
+- **50** — amount and date only. Usually a card payment where the bank prints the
+  **trading name**, not the legal one: `PayU*eMAG.ro` for DANTE INTERNATIONAL SA,
+  `MALL DE PLANTE SI GHIVECE` for ROBERTOROSSI MALL S.R.L. Real matches, but a
+  human has to say so.
+- `ambiguous: n` — n other expenses tie on the same score. Do not post those
+  unattended; the amount alone cannot separate two invoices of the same value.
+
+`norm()` folds diacritics and drops `SRL`/`S.A.`/`S.C.` before comparing, because
+the bank prints one form and SmartBill stores the other.
+
+### Two preconditions that silently make reconciliation impossible
+
+Both were true in September 2026 and each looks like "the matcher found nothing":
+
+- **The bank feed stops on its own.** PSD2 consent expires (~90 days), and
+  SmartBill does not shout about it - the report simply shows no rows past the
+  last sync. `banktx` returns `[]` for a period that plainly had payments. Check
+  `/raport/raport_importuri_extrase/` for the last import, or read `lastSync` /
+  `lastSyncDays` off the ajax response. Re-connecting needs the bank's own auth
+  screen, so it is a human's job, not the CLI's.
+- **`De verificat` expenses cannot be paid.** An e-invoice fetched from SPV lands
+  as `De verificat` with `payable: false`; it has to be registered
+  (`Inregistrata`) before any payment attaches to it. `expenses --json` reports
+  both fields - check `payable` before proposing anything.
 
 ### CSV formats
 
