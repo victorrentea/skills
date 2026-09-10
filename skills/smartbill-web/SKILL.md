@@ -317,6 +317,29 @@ acolo, nu trei pasi mai tarziu ca plata gresita.
 Bancile retiparesc numarul de factura fara zerouri (`AS001183` platit cu referinta
 `as 1183`), deci potrivirea pe numar incearca si coada numerica fara padding.
 
+### Glovo nu se cupleaza 1:1, si nu e o problema de algoritm
+
+Verificat pe e-factura preluata din SPV (`/network/viewer/anaf/<extdocId>/`):
+factura GLOVOAPPRO contine **doar taxele Glovo** - `Taxa de livrare`,
+`Service fee`, `Taxa vreme rea`, `Taxa comanda minima`, plus discounturile lor.
+Mancarea nu apare nicaieri. Plata cu cardul, in schimb, e comanda intreaga.
+
+Iunie-august 2026: **39 de plati Glovo = 8,245.94 RON** fata de **46 de facturi
+GLOVOAPPRO = 798.27 RON**, adica 9.7%. Nicio suma de pe extras nu are cum sa fie
+egala cu o factura, deci `reconcile` le lasa necuplate **corect** - nu e nimic de
+reglat la scor sau la fereastra de zile.
+
+Nici pe data nu se rezolva: data facturii vine la ~2 zile dupa data EPOS a
+comenzii, dar numaratoarea pe zi nu se inchide (EPOS 22/07 are 3 comenzi, 24/07
+are 3 facturi, dar EPOS 29/07 are 3 si 31/07 are 4). Sunt mai multe facturi decat
+plati, deci pairing-ul pe comanda nu e reconstruibil din datele astea.
+
+Ce ramane e o decizie de contabilitate, nu de automatizare: fie se sparge fiecare
+plata Glovo intre factura de taxe si restul (mancare, fara factura de la
+restaurant), fie facturile de taxe se marcheaza platite cu data decontarii si
+restul se inregistreaza separat. Diferenta - ~7,450 RON pe trei luni - nu are
+factura in SmartBill deloc.
+
 ### Two preconditions that silently make reconciliation impossible
 
 Both were true in September 2026 and each looks like "the matcher found nothing":
