@@ -91,6 +91,11 @@ export function parseBtPdf(path: string): BtStatement {
     const afterDate = body.replace(LEADING_DATE, '').trim();
     if (SKIP.test(afterDate) || SKIP.test(body)) {
       if (/^SOLD ANTERIOR/.test(afterDate)) started = true;
+      /* Everything after the closing totals is the availability trailer -
+       * TOTAL DISPONIBIL / Fonduri proprii / Credit neutilizat - and each of
+       * those repeats the balance in the Credit column. Parsed on, March came
+       * out 1,080.74 heavy: the same 540.37 counted twice as income. */
+      if (/^RULAJ TOTAL CONT/.test(afterDate)) started = false;
       flush(); continue;
     }
     if (!started) continue;

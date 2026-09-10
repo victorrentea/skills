@@ -277,9 +277,15 @@ async function runBrowser(outDir: string): Promise<boolean> {
       const source = async () => {
         if (flag('statement')) {
           const { parseBtPdf } = await import('./btstatement.js');
-          const st = parseBtPdf(flag('statement')!);
-          console.error(`# extras ${st.iban} ${st.from} - ${st.to}: ${st.rows.length} tranzactii`);
-          return st.rows;
+          const rows: any[] = [];
+          /* Several months at once: the reconciliation window straddles month
+           * ends anyway - a payment on 3 July settles an invoice from June. */
+          for (const f of flag('statement')!.split(',').map(x => x.trim()).filter(Boolean)) {
+            const st = parseBtPdf(f);
+            console.error(`# extras ${st.iban} ${st.from} - ${st.to}: ${st.rows.length} tranzactii`);
+            rows.push(...st.rows);
+          }
+          return rows;
         }
         const iban = Number(flag('iban') ?? (await acq.ibans(s))[0].id);
         return acq.bankTx(s, { ...period(), iban });
@@ -339,6 +345,17 @@ async function runBrowser(outDir: string): Promise<boolean> {
       ]);
       const r = acq.reconcile(txs, exps, { windowDays: Number(flag('window') ?? 60) });
       if (has('json')) { out(r); return true; }
+      if (flag('html')) {
+        const { renderReconcile } = await import('./reconcile-html.js');
+        const { writeFileSync } = await import('node:fs');
+        const path = flag('html')!;
+        writeFileSync(path, renderReconcile(r, {
+          from: need('from'), to: need('to'),
+          sources: (flag('statement') ?? 'feed SmartBill').split(',').map(x => x.trim()),
+        }));
+        console.log(path);
+        return true;
+      }
       console.log(`${r.matches.length} potriviri, ${r.unmatchedTx.length} plati necuplate, ${r.unmatchedExpenses.length} cheltuieli neplatite\n`);
       for (const m of r.matches)
         console.log(`[${String(m.score).padStart(3)}] ${m.txDate} -${m.txAmount.toFixed(2).padStart(9)}  ->  ${m.doc} (${m.supplier})  docId=${m.docId} txId=${m.txId}${m.ambiguous ? `  AMBIGUU(+${m.ambiguous})` : ''}\n       ${m.why.join(' | ')}\n       extras: ${m.txDetails.replace(/\s+/g, ' ').slice(0, 110)}`);
