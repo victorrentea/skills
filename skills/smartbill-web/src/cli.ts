@@ -271,9 +271,22 @@ async function runBrowser(outDir: string): Promise<boolean> {
         return true;
       }
 
-      if (cmd === 'banktx') {
+      /* Where the transactions come from: SmartBill's own feed, or the monthly
+       * BT PDF. The feed is a PSD2 connection that expires without saying so -
+       * when it has, --statement is the only way to see the month at all. */
+      const source = async () => {
+        if (flag('statement')) {
+          const { parseBtPdf } = await import('./btstatement.js');
+          const st = parseBtPdf(flag('statement')!);
+          console.error(`# extras ${st.iban} ${st.from} - ${st.to}: ${st.rows.length} tranzactii`);
+          return st.rows;
+        }
         const iban = Number(flag('iban') ?? (await acq.ibans(s))[0].id);
-        let rows = await acq.bankTx(s, { ...period(), iban });
+        return acq.bankTx(s, { ...period(), iban });
+      };
+
+      if (cmd === 'banktx') {
+        let rows = await source();
         if (has('out-only')) rows = rows.filter(r => r.paid > 0);
         if (has('in-only')) rows = rows.filter(r => r.received > 0);
         if (has('unprocessed')) rows = rows.filter(r => !r.processed);
@@ -284,9 +297,8 @@ async function runBrowser(outDir: string): Promise<boolean> {
       }
 
       // reconcile
-      const iban = Number(flag('iban') ?? (await acq.ibans(s))[0].id);
       const [txs, exps] = await Promise.all([
-        acq.bankTx(s, { ...period(), iban }),
+        source(),
         acq.expenses(s, { from: flag('exp-from') ?? need('from'), to: need('to') }),
       ]);
       const r = acq.reconcile(txs, exps, { windowDays: Number(flag('window') ?? 60) });

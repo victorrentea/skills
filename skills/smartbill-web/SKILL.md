@@ -276,6 +276,47 @@ On top of that, 45 base + 35 if the supplier name appears in the statement text
 `norm()` folds diacritics and drops `SRL`/`S.A.`/`S.C.` before comparing, because
 the bank prints one form and SmartBill stores the other.
 
+### Extrasul din PDF, cand feed-ul bancar a expirat
+
+`--statement <extras.pdf>` face `reconcile` si `banktx` sa citeasca extrasul lunar
+BT de pe disc in loc de feed-ul SmartBill. Asta e ce salveaza o luna intreaga cand
+consimtamantul PSD2 a expirat:
+
+```bash
+npm run sb -- reconcile --from 01/07/2026 --to 31/07/2026 --exp-from 01/05/2026 \
+  --statement "$HOME/My Drive/Conta/2026-07/Statements_RO65BTRLRONCRT0531322001_2026-07_VICTOR_RENTEA_CONSULTING_S_R_L.PDF"
+```
+
+`--exp-from` largeste doar fereastra de cheltuieli: o plata din iulie stinge des o
+factura din iunie, si fara asta nu are ce gasi.
+
+Extragerea trece prin **`pdftotext -layout`** (poppler), nu printr-o librarie JS,
+pentru ca diferenta debit/credit e purtata **exclusiv de pozitia coloanei**. Fara
+layout ai "529.10" si nimic care sa spuna daca banii au plecat sau au venit - iar
+inversul inseamna o plata inregistrata ca incasare.
+
+Trei lucruri care au costat cate o rulare gresita, toate in acelasi extras:
+
+- **Randurile de detaliu se termina si ele in cifre.** "...valoare tranzactie:
+  291.70" arata exact ca o tranzactie noua. Sumele reale sunt aliniate la dreapta
+  in coloana lor, deci se cere ca numarul sa se termine langa capul de coloana;
+  altfel iulie iese cu 291.70 in plus la debit.
+- **Antetul se repeta la fiecare pagina, in mijlocul unei tranzactii.** Tratat ca
+  frontiera de sectiune, orfanizeaza randurile de detaliu de dupa el - si odata cu
+  ele numele furnizorului. Asa au ajuns doua plati de 605.00 din 9 iulie (`as 1129`
+  si `as 1183`) sa arate identic si sa se cupleze pe factura gresita. Antetul e
+  zgomot de pagina, pozitiile coloanelor se citesc din textul brut.
+- **Blocul de telefon "004 0264 30 8028 ... apelabil din orice retea"** aterizeaza
+  la fel in mijlocul unui detaliu. Trebuie filtrat, altfel numele furnizorului
+  dispare sub el.
+
+Parserul **verifica singur** rezultatul contra `RULAJ TOTAL CONT` din extras si
+arunca daca debitul sau creditul nu ies la banut. Un rand pierdut sau dublat apare
+acolo, nu trei pasi mai tarziu ca plata gresita.
+
+Bancile retiparesc numarul de factura fara zerouri (`AS001183` platit cu referinta
+`as 1183`), deci potrivirea pe numar incearca si coada numerica fara padding.
+
 ### Two preconditions that silently make reconciliation impossible
 
 Both were true in September 2026 and each looks like "the matcher found nothing":

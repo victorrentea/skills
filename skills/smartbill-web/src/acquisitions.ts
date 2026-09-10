@@ -194,7 +194,9 @@ export function norm(s: string): string {
 /** Longest run of supplier words that appears verbatim in the bank details. */
 function nameHit(supplier: string, details: string): string | null {
   const d = norm(details);
-  const words = norm(supplier).split(' ').filter(w => w.length >= 4);
+  // 3, not 4: "Alfa Web SRL" normalises to ALFA WEB, and dropping WEB leaves
+  // ALFA alone - too short to be evidence, so the whole supplier stops matching.
+  const words = norm(supplier).split(' ').filter(w => w.length >= 3);
   for (let n = words.length; n >= 1; n--) {
     for (let i = 0; i + n <= words.length; i++) {
       const phrase = words.slice(i, i + n).join(' ');
@@ -210,7 +212,16 @@ function numberHit(number: string, details: string): boolean {
   const n = norm(number);
   if (n.length >= 5 && d.includes(n)) return true;
   const bare = number.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-  return bare.length >= 6 && d.replace(/ /g, '').includes(bare);
+  if (bare.length >= 6 && d.replace(/ /g, '').includes(bare)) return true;
+  /* Banks retype the number by hand and drop the padding: AS001183 is paid with
+   * the reference "as 1183". Compare the unpadded numeric tail too. */
+  const tail = /^([A-Z]*)0*(\d+)$/i.exec(bare);
+  if (tail && tail[2].length >= 3) {
+    const loose = (tail[1] + tail[2]).toUpperCase();
+    if (d.replace(/ /g, '').includes(loose)) return true;
+    if (tail[1] && d.includes(`${tail[1].toUpperCase()} ${tail[2]}`)) return true;
+  }
+  return false;
 }
 
 /**
