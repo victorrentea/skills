@@ -347,6 +347,56 @@ Doua reguli care tin cautarea onesta:
 Rulat pe iunie-august 2026, cu fereastra larga si cos de 3: **zero plati inchise
 exact**. Nu e un prag de reglat - vezi mai jos de ce.
 
+### `glovo-orders` - singurul lucru care chiar inchide o plata Glovo
+
+Nicio combinatie de facturi din SmartBill nu inchide o plata Glovo, pentru ca una
+dintre cele trei componente nu e facturata de nimeni. **Istoricul de comenzi din
+contul Glovo e singura sursa care spune cum se sparge plata:**
+
+```
+TOTAL = (PRODUCTS + DISCOUNT)                                  -> factura restaurantului
+      + (DELIVERY + SERVICE + WEATHER + MIN_BASKET)            -> factura GLOVOAPPRO
+      + COURIER_TIP                                            -> nicio factura, niciodata
+```
+
+Verificat pe comanda `101703773550` (Trattoria IL CALCIO): `258.00 - 77.40 = 180.60`
+e exact factura din SPV `DV7653`, `2.99 + 9.99 = 12.98` e exact `RIDPJ-0303978`, iar
+`180.60 + 12.98 + 25.80 = 219.38` e exact plata cu cardul din 7 iulie. Cei 38.78 pe
+care niciun subset-sum nu-i explica erau factura de taxe plus bacsisul.
+
+```bash
+npm run sb -- glovo-orders --from 01/01/2026 --to 31/08/2026 \
+  --exp-from 01/01/2026 --exp-to 15/09/2026 --statement "<extrase.pdf,...>"
+```
+
+Comenzile se citesc din `data/glovo-orders.psv`; `--orders` schimba fisierul.
+
+**Cum se recolteaza istoricul** (glovoapp.com, in Chrome-ul in care esti logat):
+
+- `api.glovoapp.com/v3/customer/orders-list?limit=12[&offset=<ultimul orderId>]`
+  pentru lista, `/v3/customer/orders/<id>` pentru `pricingBreakdown`.
+- **Nu poti chema API-ul cu un `fetch` propriu**: raspunde 401 fara antete CORS, deci
+  pica cu „Failed to fetch". Aplicatia foloseste XHR cu ~20 de antete `Glovo-*` plus
+  `Authorization`. Solutia: carligi `XMLHttpRequest.prototype.setRequestHeader`,
+  aduni antetele **in pagina**, apoi rulezi cererile tot din pagina. Tokenul nu
+  trebuie sa iasa niciodata in afara tabului.
+- **Comenzile nu au data** nicaieri in API. Data vine din extras: `TOTAL` e egal cu
+  suma platii cu cardul, si asta ancoreaza comanda in timp.
+- `paymentMethodsBreakdown` spune **cu ce card** s-a platit (`terminația 8205` e
+  cardul firmei, acelasi `42448205` din extras), deci separa comenzile firmei de
+  cele personale.
+
+Rulat pe ianuarie-august 2026: din 102 comenzi, **43 se regasesc in extrasul RON**,
+**39 din 43 au factura de taxe** identificata exact - si **una singura are factura de
+la restaurant**.
+
+| | RON |
+|---|---|
+| platit cu cardul | 8.499,70 |
+| mancare | 7.048,31, din care **facturata 180,60** |
+| taxe Glovo | 676,29, din care facturate 641,32 |
+| bacsis curier | 686,57, nefacturabil |
+
 ### Glovo nu se cupleaza 1:1, si nu e o problema de algoritm
 
 Verificat pe e-factura preluata din SPV (`/network/viewer/anaf/<extdocId>/`):

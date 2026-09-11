@@ -204,7 +204,7 @@ async function runApi(outDir: string): Promise<boolean> {
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
 const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft',
-  'expenses', 'banktx', 'ibans', 'reconcile', 'glovo'];
+  'expenses', 'banktx', 'ibans', 'reconcile', 'glovo', 'glovo-orders'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
@@ -250,7 +250,7 @@ async function runBrowser(outDir: string): Promise<boolean> {
    * behind a Vue front-end, so they need the signed-in cookie jar but no
    * clicking - `acq` replays the POST the page makes.
    * ---------------------------------------------------------------- */
-  if (['expenses', 'banktx', 'ibans', 'reconcile', 'glovo'].includes(cmd)) {
+  if (['expenses', 'banktx', 'ibans', 'reconcile', 'glovo', 'glovo-orders'].includes(cmd)) {
     const acq = await import('./acquisitions.js');
     const s = await open({ headless: !has('headed'), cdp: flag('cdp') });
     try {
@@ -299,6 +299,32 @@ async function runBrowser(outDir: string): Promise<boolean> {
         if (has('json')) out(rows);
         else for (const r of rows)
           console.log(`${r.date}  ${(r.paid ? '-' + r.paid.toFixed(2) : '+' + r.received.toFixed(2)).padStart(12)}  ${r.processed ? 'procesata  ' : 'NEprocesata'}  ${r.details.replace(/\s+/g, ' ').slice(0, 90)}`);
+        return true;
+      }
+
+      /* The order history from glovoapp.com says how each payment splits.
+       * Without it the split is not recoverable at all - see src/glovo.ts. */
+      if (cmd === 'glovo-orders') {
+        const g = await import('./glovo.js');
+        const orders = g.readOrders(flag('orders', 'data/glovo-orders.psv')!);
+        const [txs, exps] = await Promise.all([
+          source(),
+          acq.expenses(s, { from: flag('exp-from') ?? need('from'), to: flag('exp-to') ?? need('to') }),
+        ]);
+        const ms = g.matchOrders(orders, txs, exps, { days: Number(flag('days') ?? 21) });
+        if (has('json')) { out(ms); return true; }
+        const m2 = (n: number) => n.toFixed(2).padStart(8);
+        const dated = ms.filter(m => m.tx);
+        const sum = (f: (m: any) => number) => dated.reduce((a, m) => a + f(m), 0);
+        console.log(`${orders.length} comenzi Glovo, ${dated.length} gasite in extras\n`);
+        for (const m of dated) {
+          const o = m.order;
+          console.log(`${m.tx!.date}  ${m2(o.total)}  ${o.store.slice(0, 26).padEnd(26)} card ${o.card}`);
+          console.log(`            ${m2(o.food)}  mancare   ${m.foodInvoice ? 'FACTURA ' + m.foodInvoice.doc + ' / ' + m.foodInvoice.supplier : 'FARA FACTURA'}`);
+          if (o.fees) console.log(`            ${m2(o.fees)}  taxe      ${m.feeInvoice ? 'FACTURA ' + m.feeInvoice.doc : 'fara factura gasita'}`);
+          if (o.tip) console.log(`            ${m2(o.tip)}  bacsis    nefacturabil`);
+        }
+        console.log(`\nTOTAL platit ${sum(m => m.order.total).toFixed(2)} | mancare ${sum(m => m.order.food).toFixed(2)} (facturata ${sum(m => m.foodInvoice ? m.order.food : 0).toFixed(2)}) | taxe ${sum(m => m.order.fees).toFixed(2)} (facturate ${sum(m => m.feeInvoice ? m.order.fees : 0).toFixed(2)}) | bacsis ${sum(m => m.order.tip).toFixed(2)}`);
         return true;
       }
 
