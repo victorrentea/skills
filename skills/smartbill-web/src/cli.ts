@@ -313,6 +313,17 @@ async function runBrowser(outDir: string): Promise<boolean> {
         ]);
         const ms = g.matchOrders(orders, txs, exps, { days: Number(flag('days') ?? 21) });
         if (has('json')) { out(ms); return true; }
+        if (flag('pdf')) {
+          const { glovoPdfHtml } = await import('./glovo-pdf.js');
+          const { chromium } = await import('playwright');
+          const b = await chromium.launch();
+          const pg = await (await b.newContext()).newPage();
+          await pg.setContent(glovoPdfHtml(ms, { iban: flag('iban-label', 'RO65BTRLRONCRT0531322001')!, from: need('from'), to: need('to') }), { waitUntil: 'load' });
+          await pg.pdf({ path: flag('pdf')!, format: 'A4', landscape: true, printBackground: true });
+          await b.close();
+          console.log(flag('pdf'));
+          return true;
+        }
         const m2 = (n: number) => n.toFixed(2).padStart(8);
         const dated = ms.filter(m => m.tx);
         const sum = (f: (m: any) => number) => dated.reduce((a, m) => a + f(m), 0);

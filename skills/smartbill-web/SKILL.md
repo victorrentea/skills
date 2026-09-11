@@ -371,6 +371,13 @@ npm run sb -- glovo-orders --from 01/01/2026 --to 31/08/2026 \
 
 Comenzile se citesc din `data/glovo-orders.psv`; `--orders` schimba fisierul.
 
+`--pdf <fisier>` scoate acelasi rezultat ca PDF pentru contabila. Layout-ul
+coloreaza **sursele**, nu randurile: albastru = ce vine din extras (plata), verde
+= ce vine din factura din SPV, ocru = partea fara factura. Fara separarea asta,
+tabelul citeste „plata 219,38, factura 12,98" si arata ca o greseala, nu ca o
+structura. Se ataseaza pe draft cu `attach.mjs` din skill-ul `gmail-web` -
+conectorul Gmail vrea base64 inline, ceea ce nu are cum sa treaca prin conversatie.
+
 **Cum se recolteaza istoricul** (glovoapp.com, in Chrome-ul in care esti logat):
 
 - `api.glovoapp.com/v3/customer/orders-list?limit=12[&offset=<ultimul orderId>]`
