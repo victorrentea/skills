@@ -598,14 +598,10 @@ async function runBrowser(outDir: string): Promise<boolean> {
          * the save. Re-download the PDF too: the whole point of an edit is the
          * new PDF, and 'saved' without one is a half-finished job. */
         const number = (await list(page)).find(x => x.id === id)?.number.replace(/\s/g, '');
-        let file = '(no number - not in the current report period)';
-        if (number) {
-          const m = number.match(/^([A-Za-z]+)(\d+)$/);
-          if (m) {
-            const { bytes } = await sb.invoicePdf(m[1], m[2]);
-            file = savePdf(bytes, outDir, filename ?? `${number}.pdf`);
-          }
-        }
+        /* Through the page, not sb.invoicePdf: the API is off on this
+         * subscription, so the API path threw AFTER the edit had already been
+         * saved - the work landed and the command still reported failure. */
+        const file = savePdf(await pdfBytes(page, id), outDir, filename ?? `${number ?? id}.pdf`);
         log(`[${i + 1}/${rows.length}] ${number ?? `id ${id}`}  ${file}`);
         await jitter();
       }

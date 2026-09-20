@@ -739,6 +739,16 @@ input events through CDP, so `waitForEvent('download')` works.
 - `rm` is irreversible and only works on the last invoice in a series. Prefer
   `cancel` (reversible) or `storno` (leaves an accounting trail).
 - `email` sends real mail to a real client. Confirm the recipient first.
+- **Keep the invoice LINE short.** The item name is BT-153 in the e-Factura XML
+  and ANAF rejects an over-long one, so a line that reads fine on the PDF can
+  fail validation in SPV days later, when the fix is a storno. Target **≤100
+  characters**; put anything extra in the BT-154 description field
+  (`[name="edit_product_description"]`), not in the name.
+  A real one, corrected on 20 Sep 2026 before it was sent:
+  `Serviciu de instruire curs AI-Assisted Coding | Perioada: 7-8.09.2026 | Contract: KL676, Anexa 4 | 6.000,00 EUR x curs BNR 5,2644 lei/EUR`
+  is **137 chars**; `Instruire AI-Assisted Coding 7-8.09.2026, contract KL676 anexa 4, 6000 EUR x 5,2644`
+  is 83 and carries the same facts. This only bites domestic (S-series) invoices,
+  which are the ones that go to SPV.
 - Invoice numbers go in **as printed**, leading zeros included — `0159`, not `159`
   on accounts that pad. An unpadded number comes back as "not found".
 - Run `taxes` and `series` before issuing rather than reusing remembered values.
