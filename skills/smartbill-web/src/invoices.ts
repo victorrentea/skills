@@ -386,7 +386,14 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
   );
   const needle = o.description.slice(-30).replace(/\s+/g, ' ').trim();
   if (!row.includes(needle)) throw new Error(`line did not take the description: ${row}`);
-  if (!row.replace(/\s/g, '').includes(o.price.replace(/\s/g, ''))) {
+  /* Compare the price NUMERICALLY. SmartBill renders 31586.40 as "31586.4",
+   * so a literal substring check fails on a line that is perfectly correct -
+   * and a false failure here is dangerous: the natural response is to re-run,
+   * which issues the same invoice twice. */
+  const wantPrice = Number(String(o.price).replace(/\s/g, '').replace(',', '.'));
+  const onRow = (row.match(/\d[\d.,]*/g) ?? [])
+    .map(n => Number(n.replace(/\s/g, '').replace(/,(\d{1,2})$/, '.$1').replace(/,/g, '')));
+  if (!Number.isFinite(wantPrice) || !onRow.some(n => Math.abs(n - wantPrice) < 0.005)) {
     throw new Error(`line did not take the price ${o.price}: ${row}`);
   }
 

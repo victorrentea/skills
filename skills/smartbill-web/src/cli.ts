@@ -203,7 +203,7 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'newclient', 'touch', 'inspect', 'rmdraft',
+const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'newclient', 'pickclient', 'setterm', 'touch', 'inspect', 'rmdraft',
   'expenses', 'banktx', 'ibans', 'reconcile', 'glovo', 'glovo-orders'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
@@ -212,7 +212,7 @@ async function runBrowser(outDir: string): Promise<boolean> {
   if (!BROWSER_CMDS.includes(cmd)) return false;
   const { open, login, jitter } = await import('./session.js');
   const { list, report, lineText, issueFromTemplate, finalizeDraft, createFromTemplate, editDescription, downloadPdf, pdfBytes, url, S } = await import('./invoices.js');
-  const { setInvoiceClient, addInvoiceClient } = await import('./clients.js');
+  const { setInvoiceClient, addInvoiceClient, pickInvoiceClient } = await import('./clients.js');
 
   if (cmd === 'login') { await login(); return true; }
 
@@ -614,6 +614,45 @@ async function runBrowser(outDir: string): Promise<boolean> {
     /* Point a DRAFT at a newly created customer. `issue` inherits the template's
      * client and there is no other way to change it; `reclient` is the wrong
      * tool because it edits the existing customer record in place. */
+    /* Set the payment TERM on an existing document.
+     *
+     * Needed because any later save of the invoice - `pickclient` included -
+     * re-applies the term from the form, and the form carries whatever the
+     * TEMPLATE had. An invoice issued off a 60-day template silently gets a
+     * 60-day due date even when `issue --term` asked for 30. */
+    if (cmd === 'setterm') {
+      const id = need('id');
+      const term = need('term');
+      await page.goto(url.edit(id), { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector(S.editPencil, { timeout: 30_000 });
+      await page.selectOption('#payment_term_select', { label: term });
+      const due = await page.evaluate<string>(
+        `[(document.querySelector('#due_day')||{}).value,(document.querySelector('#due_month')||{}).value,(document.querySelector('#due_year')||{}).value].join('/')`
+      );
+      await page.click(S.saveInvoice);
+      await page.waitForSelector('text=/salvat cu succes/i', { timeout: 20_000 }).catch(() => {});
+      // Ground truth is the PDF, not the select we just changed.
+      const { text } = await pdfText(await pdfBytes(page, id));
+      const printed = (text.replace(/\s+/g, ' ').match(/Termen plata:?\s*([0-9\/.]+)/i) ?? [])[1];
+      log(`setterm ${id} -> "${term}"; form due ${due}; PDF says ${printed ?? '(not found)'}`);
+      return true;
+    }
+
+    /* Attach an EXISTING customer (by CIF or name) to a draft, via the header
+     * autocomplete - no new nomenclator entry, no edit of the template's one. */
+    if (cmd === 'pickclient') {
+      const id = need('id');
+      const q = need('query');
+      const dry = has('dry-run');
+      const r = await pickInvoiceClient(page, id, q, { dryRun: dry });
+      log(`${dry ? 'DRY-RUN: ' : ''}pickclient ${id} "${q}" -> ${JSON.stringify(r)}`);
+      if (!dry) {
+        const { text } = await pdfText(await pdfBytes(page, id));
+        log(`PDF now shows: ${(summarize(text).party ?? '(none)')}`);
+      }
+      return true;
+    }
+
     if (cmd === 'newclient') {
       const want = {
         name: need('name'),

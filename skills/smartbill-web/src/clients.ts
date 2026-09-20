@@ -197,3 +197,50 @@ export async function setInvoiceClient(
     .catch(() => { throw new Error('no "salvat cu succes" after saving the invoice'); });
   return staged;
 }
+
+/**
+ * Attach an EXISTING client to an invoice through the header autocomplete.
+ *
+ * Neither `setInvoiceClient` (edits the client record in place) nor
+ * `addInvoiceClient` (creates a new one) is right when the customer is already
+ * in the nomenclator: the first corrupts it, the second leaves a duplicate CIF.
+ * `#client_name` is a jQuery-UI autocomplete whose placeholder says
+ * "CIF pt. firme/CNP...", so the fiscal code is the natural key.
+ */
+export async function pickInvoiceClient(
+  page: Page,
+  invoiceId: string | number,
+  query: string,
+  opts: { dryRun?: boolean } = {}
+): Promise<{ options: string[]; picked?: string }> {
+  await page.goto(url.edit(invoiceId), { waitUntil: 'domcontentloaded' });
+  const box = page.locator(S_CLIENT.nameOnInvoice);
+  await box.waitFor({ state: 'visible', timeout: 30_000 });
+
+  // Type, never assign: jQuery-UI listens for real key events, and a value set
+  // through the DOM leaves the widget's own state untouched, so the menu never
+  // opens - which looks exactly like "this client does not exist".
+  await box.click();
+  await box.fill('');
+  await box.type(query, { delay: 60 });
+
+  const menu = page.locator('ul.ui-autocomplete:visible li');
+  await menu.first().waitFor({ state: 'visible', timeout: 20_000 })
+    .catch(() => { throw new Error(`no autocomplete suggestion for "${query}"`); });
+  const options = (await menu.allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
+  if (opts.dryRun) return { options };
+
+  const picked = options[0];
+  await menu.first().click();
+  // The header must end up carrying a name - anything else means the pick was
+  // swallowed, and saving then would store the template's customer.
+  await page.waitForFunction(
+    `((document.querySelector('#client_name')||{}).value||'').trim().length > 0`,
+    undefined, { timeout: 20_000 }
+  );
+  await page.click(S_CLIENT.saveInvoice);
+  // The "salvat cu succes" notice is unreliable (Sep 2026); the caller verifies
+  // against the PDF instead, so do not fail the whole run on its absence.
+  await page.waitForSelector(S_CLIENT.savedNotice, { timeout: 15_000 }).catch(() => {});
+  return { options, picked };
+}
