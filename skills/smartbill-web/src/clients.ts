@@ -23,6 +23,16 @@ export interface ClientSnapshot {
   city?: string;
   county?: string;
   country?: string;
+  /** VAT / fiscal code (`#client_cif`). Printed on the invoice as "VAT CODE",
+   *  so a reverse-charge invoice is WRONG without it: leaving the template's
+   *  code in place prints one company's name over another company's VAT id. */
+  cif?: string;
+  /** Registrar-of-companies / organisation number. */
+  regCom?: string;
+  email?: string;
+  /** Trading name. The template's value survives an edit that ignores it, so
+   *  pass '' to clear it rather than leaving the previous customer's brand on. */
+  brand?: string;
 }
 
 export const S_CLIENT = {
@@ -31,6 +41,10 @@ export const S_CLIENT = {
   editPencil: '#client_details_span a[title="Modifica client"]',
   modal: '#modal-emitere-add-client',
   modalName: '#client_name_input',
+  modalCif: '#client_cif',
+  modalRegCom: '#client_reg_com',
+  modalEmail: '#client_email',
+  modalBrand: '#client_brand',
   modalAddress: '#client_address',
   modalCity: '#client_city',
   modalCounty: '#client_county',
@@ -56,6 +70,79 @@ async function openClientModal(page: Page) {
 }
 
 /**
+ * Attach a BRAND-NEW client to an invoice, instead of rewriting the one it
+ * inherited from a template.
+ *
+ * `add_new_client(e)` branches on `e.id`: empty means "add", anything else means
+ * "modify". The id comes from the modal's `client-data`, which `clean_client_modal()`
+ * removes - so cleaning first is the whole difference between creating
+ * "Statens Jordbruksverk" and silently RENAMING the template's customer in the
+ * nomenclator, taking its VAT code with it.
+ *
+ * That is why `setInvoiceClient` must not be pointed at a template: it opens
+ * `edit_client()`, which keeps the id and therefore always modifies.
+ */
+export async function addInvoiceClient(
+  page: Page,
+  invoiceId: string | number,
+  want: ClientSnapshot,
+  opts: { dryRun?: boolean } = {}
+): Promise<Record<string, string>> {
+  await page.goto(url.edit(invoiceId), { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector(S_CLIENT.nameOnInvoice, { timeout: 30_000 });
+
+  // String form: tsx compiles arrows with a `__name` helper the page lacks.
+  const cleaned = await page.evaluate<boolean>(
+    "(function(){ if (typeof window.clean_client_modal !== 'function') return false;"
+    + " window.clean_client_modal();"
+    + " $('#modal-emitere-add-client').modal('show'); return true; })()"
+  );
+  if (!cleaned) throw new Error('clean_client_modal() missing - SmartBill changed the issuing page');
+  await page.waitForSelector(`${S_CLIENT.modalSave}:visible`, { timeout: 20_000 });
+
+  // Refuse to continue if the modal still carries an id: saving then would edit
+  // an existing customer rather than create one, and the damage is off-invoice.
+  const carriesId = await page.evaluate<boolean>(
+    "!!$('#modal-emitere-add-client').data('client-data')"
+  );
+  if (carriesId) throw new Error('modal still carries client-data - it would MODIFY an existing client, not add one');
+
+  await page.fill(S_CLIENT.modalName, want.name);
+  if (want.cif !== undefined) await page.fill(S_CLIENT.modalCif, want.cif);
+  if (want.regCom !== undefined) await page.fill(S_CLIENT.modalRegCom, want.regCom);
+  if (want.email !== undefined) await page.fill(S_CLIENT.modalEmail, want.email);
+  if (want.address !== undefined) await page.fill(S_CLIENT.modalAddress, want.address);
+  if (want.city !== undefined) await page.fill(S_CLIENT.modalCity, want.city);
+  if (want.county !== undefined) await page.fill(S_CLIENT.modalCounty, want.county);
+  // clean_client_modal() defaults the country to Romania, so this is not optional
+  // for a foreign customer even when the caller leaves it out.
+  await page.fill(S_CLIENT.modalCountry, want.country ?? '');
+
+  const q = (sel: string) => `((document.querySelector(${JSON.stringify(sel)}) || {}).value || '')`;
+  const staged = await page.evaluate<Record<string, string>>(
+    `({ name: ${q(S_CLIENT.modalName)}, cif: ${q(S_CLIENT.modalCif)},`
+    + ` regCom: ${q(S_CLIENT.modalRegCom)}, address: ${q(S_CLIENT.modalAddress)},`
+    + ` city: ${q(S_CLIENT.modalCity)}, country: ${q(S_CLIENT.modalCountry)} })`
+  );
+
+  if (opts.dryRun) return staged;
+
+  await page.click(S_CLIENT.modalSave);
+  await page.waitForSelector(`${S_CLIENT.modal}:visible`, { state: 'hidden', timeout: 20_000 })
+    .catch(() => { throw new Error('client modal stayed open - the save was rejected'); });
+  const headerShowsName =
+    `((document.querySelector(${JSON.stringify(S_CLIENT.nameOnInvoice)}) || {}).value || '').trim()`
+    + ` === ${JSON.stringify(want.name)}`;
+  await page.waitForFunction(headerShowsName, undefined, { timeout: 20_000 })
+    .catch(() => { throw new Error(`invoice header still not showing "${want.name}"`); });
+
+  await page.click(S_CLIENT.saveInvoice);
+  await page.waitForSelector(S_CLIENT.savedNotice, { timeout: 30_000 })
+    .catch(() => { throw new Error('no "salvat cu succes" after saving the invoice'); });
+  return staged;
+}
+
+/**
  * Rewrite the client snapshot of ONE issued invoice. Does not save the document
  * when `dryRun`, so the staged values can be inspected first.
  * Returns what the form holds after the modal closes.
@@ -71,6 +158,10 @@ export async function setInvoiceClient(
 
   // fill() dispatches real input events - see the note at the top of this file.
   await page.fill(S_CLIENT.modalName, want.name);
+  if (want.cif !== undefined) await page.fill(S_CLIENT.modalCif, want.cif);
+  if (want.regCom !== undefined) await page.fill(S_CLIENT.modalRegCom, want.regCom);
+  if (want.email !== undefined) await page.fill(S_CLIENT.modalEmail, want.email);
+  if (want.brand !== undefined) await page.fill(S_CLIENT.modalBrand, want.brand);
   if (want.address !== undefined) await page.fill(S_CLIENT.modalAddress, want.address);
   if (want.city !== undefined) await page.fill(S_CLIENT.modalCity, want.city);
   if (want.county !== undefined) await page.fill(S_CLIENT.modalCounty, want.county);
@@ -81,6 +172,8 @@ export async function setInvoiceClient(
   const q = (sel: string) => `((document.querySelector(${JSON.stringify(sel)}) || {}).value || '')`;
   const staged = await page.evaluate<Record<string, string>>(
     `({ id: ${q(S_CLIENT.idOnInvoice)}, name: ${q(S_CLIENT.modalName)},`
+    + ` cif: ${q(S_CLIENT.modalCif)}, regCom: ${q(S_CLIENT.modalRegCom)},`
+    + ` brand: ${q(S_CLIENT.modalBrand)},`
     + ` address: ${q(S_CLIENT.modalAddress)}, city: ${q(S_CLIENT.modalCity)},`
     + ` country: ${q(S_CLIENT.modalCountry)} })`
   );

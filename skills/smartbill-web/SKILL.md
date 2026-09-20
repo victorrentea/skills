@@ -145,7 +145,8 @@ appear nowhere in the API.
 | `sb -- pdf --id <id> --out ./out [--name INV101.pdf]` | re-download one PDF by internal id |
 | `sb -- rmdraft --id <id>` | delete an **unnumbered draft** through the row menu; refuses anything issued |
 | `sb -- inspect --id <id> [--page edit\|view\|report] [--js expr]` | read-only dump, for when SmartBill moves a selector |
-| `sb -- reclient --name X [--address ..] [--city ..] (--ids .. \| --series S --from 1 --to 9)` | rewrite the **customer** on invoices already issued; verifies every PDF afterwards |
+| `sb -- reclient --name X [--vat ..] [--regcom ..] [--address ..] [--city ..] [--brand ''] (--ids .. \| --series S --from 1 --to 9)` | rewrite the **customer** on invoices already issued; verifies name **and VAT code** in every PDF afterwards |
+| `sb -- newclient --id <id> --name X --vat .. [--regcom ..] [--address ..] [--city ..] [--country ..] [--email ..] [--dry-run]` | point a **draft** at a newly created customer, instead of editing the template's one |
 
 Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
 
@@ -191,6 +192,49 @@ Details that each cost a failed run:
   so Chrome refuses the download silently).
 - **Verify from the report, never from the form you drove.** `issue` and
   `finalize` both re-read the row and print `number`, `total` and `status`.
+- **"no confirmation after saving" is currently a FALSE alarm** (20 Sep 2026).
+  The post-save notice `text=/salvat cu succes/i` no longer appears — or no
+  longer within the timeout — so `issue` and `newclient` both report failure on
+  saves that landed perfectly. **Never retry on that message**: `issue` would
+  create a second draft of the same invoice. Do what the message says and check
+  `list` first; a draft shows up as a row whose number is the bare series letter.
+  The fix is a selector, not a retry — until it is found, treat that error as
+  "unknown, go and look".
+
+### Changing the customer on a DRAFT — `newclient`
+
+`issue` inherits the template's client, which is wrong whenever the new invoice
+is for somebody else. `reclient` is **not** the tool for that: it opens
+`edit_client()`, which keeps the client id and therefore *modifies the existing
+customer in the nomenclator* — renaming the template's client and overwriting its
+VAT code, damage that happens off-invoice where nobody looks.
+
+```bash
+npm run sb -- newclient --id 52336147 --name "Foo Agency" --vat SE999999999901 \
+  --regcom "999999-9999" --address "551 82 Town" --city Town --country Suedia \
+  --email ap@foo.example --dry-run
+```
+
+`add_new_client(e)` branches on `e.id`: empty means add, anything else means
+modify. The id lives in the modal's `client-data`, which `clean_client_modal()`
+removes — so `newclient` cleans first and then **refuses to save if the modal
+still carries `client-data`**. That guard is the whole safety of the command.
+
+Two details that are not optional:
+
+- **`clean_client_modal()` sets the country to `Romania`.** A foreign customer
+  therefore needs `--country` spelled out, even though "leave it alone" feels
+  like the safe default. It is not — it silently domesticates the client.
+- **The template's `#client_brand` survives** an edit that ignores it, so the
+  previous customer's trading name rides along. `newclient` clears it; `reclient`
+  takes `--brand ''` for the same reason.
+
+Verification is the PDF, and it checks the **VAT code** as well as the name: a
+right name over the template's VAT code looks correct on screen and bills the
+wrong legal entity. `reclient` now does the same, and both fetch the PDF through
+the page (`pdfBytes`) rather than `sb.invoicePdf` — the API path cannot run at
+all while API access is off, and a verification step that cannot run is worse
+than none, because it throws *after* the write has landed.
 
 ### Searching the report — `find`
 

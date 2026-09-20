@@ -203,7 +203,7 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'touch', 'inspect', 'rmdraft',
+const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'newclient', 'touch', 'inspect', 'rmdraft',
   'expenses', 'banktx', 'ibans', 'reconcile', 'glovo', 'glovo-orders'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
@@ -211,8 +211,8 @@ async function runBrowser(outDir: string): Promise<boolean> {
   // "no saved session" from open().
   if (!BROWSER_CMDS.includes(cmd)) return false;
   const { open, login, jitter } = await import('./session.js');
-  const { list, report, lineText, issueFromTemplate, finalizeDraft, createFromTemplate, editDescription, downloadPdf, url, S } = await import('./invoices.js');
-  const { setInvoiceClient } = await import('./clients.js');
+  const { list, report, lineText, issueFromTemplate, finalizeDraft, createFromTemplate, editDescription, downloadPdf, pdfBytes, url, S } = await import('./invoices.js');
+  const { setInvoiceClient, addInvoiceClient } = await import('./clients.js');
 
   if (cmd === 'login') { await login(); return true; }
 
@@ -611,6 +611,37 @@ async function runBrowser(outDir: string): Promise<boolean> {
       }
       return true;
     }
+    /* Point a DRAFT at a newly created customer. `issue` inherits the template's
+     * client and there is no other way to change it; `reclient` is the wrong
+     * tool because it edits the existing customer record in place. */
+    if (cmd === 'newclient') {
+      const want = {
+        name: need('name'),
+        address: flag('address')?.replace(/\\n/g, '\n'),
+        city: flag('city'),
+        county: flag('county'),
+        country: flag('country'),
+        cif: flag('vat'),
+        regCom: flag('regcom'),
+        email: flag('email'),
+        brand: flag('brand'),
+      };
+      const id = need('id');
+      const dry = has('dry-run');
+      const staged = await addInvoiceClient(page, id, want, { dryRun: dry });
+      log(`${dry ? 'DRY-RUN: ' : ''}newclient ${id} -> ${JSON.stringify(staged)}`);
+      if (!dry) {
+        const { text } = await pdfText(await pdfBytes(page, id));
+        const flat = text.replace(/\s+/g, ' ');
+        if (!flat.includes(want.name)) throw new Error(`PDF still does not show "${want.name}"`);
+        if (want.cif && !flat.replace(/\s/g, '').includes(want.cif.replace(/\s/g, ''))) {
+          throw new Error(`PDF does not carry VAT code "${want.cif}"`);
+        }
+        log(`verified in PDF: ${want.name} / ${want.cif ?? '(no vat)'}`);
+      }
+      return true;
+    }
+
     if (cmd === 'reclient') {
       const want = {
         name: need('name'),
@@ -618,6 +649,10 @@ async function runBrowser(outDir: string): Promise<boolean> {
         city: flag('city'),
         county: flag('county'),
         country: flag('country'),
+        cif: flag('vat'),
+        regCom: flag('regcom'),
+        email: flag('email'),
+        brand: flag('brand'),
       };
       const dry = has('dry-run');
 
@@ -650,11 +685,14 @@ async function runBrowser(outDir: string): Promise<boolean> {
         const staged = await setInvoiceClient(page, t.id, want, { dryRun: dry });
         let verdict = dry ? 'staged (not saved)' : 'saved';
 
-        // Ground truth is the PDF, not the form we just filled in.
+        // Ground truth is the PDF, not the form we just filled in. Fetched
+        // through the page: sb.invoicePdf needs the API, which is off on this
+        // subscription, and a verification step that cannot run is worse than
+        // none - it would throw after the write had already landed.
         if (!dry && t.number) {
           const m = t.number.match(/^([A-Za-z]+)(\d+)$/);
           if (m) {
-            const { bytes } = await sb.invoicePdf(m[1], m[2]);
+            const bytes = await pdfBytes(page, t.id);
             const { text } = await pdfText(bytes);
             const party = summarize(text).party ?? '';
             if (party.trim() !== want.name.trim()) {
@@ -666,6 +704,11 @@ async function runBrowser(outDir: string): Promise<boolean> {
               if (!flat.includes(line)) {
                 throw new Error(`${t.number}: PDF is missing address line "${line}" - stopping before the rest of the batch`);
               }
+            }
+            // A right name over the template's VAT code is the worst outcome
+            // here: it looks correct and bills the wrong legal entity.
+            if (want.cif && !flat.replace(/\s/g, '').includes(want.cif.replace(/\s/g, ''))) {
+              throw new Error(`${t.number}: PDF does not carry VAT code "${want.cif}" - stopping before the rest of the batch`);
             }
             verdict = 'verified in PDF';
             if (flag('out')) {

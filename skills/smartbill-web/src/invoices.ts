@@ -28,8 +28,25 @@ export const url = {
   copy: (id: string | number) => `${BASE}/documente/copiaza/factura/${id}/`,
   edit: (id: string | number) => `${BASE}/documente/editare/factura/${id}/`,
   view: (id: string | number) => `${BASE}/raport/factura/${id}/`,
+  pdf: (id: string | number) => `${BASE}/documente/pdf/factura/${id}/`,
   report: `${BASE}/raport/facturi/`,
 };
+
+/** The PDF of one document, as bytes, fetched through the signed-in page.
+ *  The API's invoicePdf needs a series+number AND an API-enabled subscription;
+ *  this needs neither, so it is the only way to verify a browser write when
+ *  API issuing is switched off. */
+export async function pdfBytes(page: Page, id: string | number): Promise<Buffer> {
+  const res = await page.request.get(url.pdf(id));
+  if (!res.ok()) throw new Error(`PDF fetch failed for ${id}: HTTP ${res.status()}`);
+  const bytes = await res.body();
+  // A stale session answers 200 with a login page, which would otherwise be
+  // parsed as an invoice that simply has none of the expected text on it.
+  if (bytes.slice(0, 5).toString() !== '%PDF-') {
+    throw new Error(`not a PDF for ${id} (${bytes.length} bytes) - the session may be stale`);
+  }
+  return bytes;
+}
 
 export interface InvoiceRef { number: string; id: string }
 
