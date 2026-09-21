@@ -30,7 +30,7 @@
  *                      [--from dd/mm/yyyy --to dd/mm/yyyy] [--details] [--json]
  *                         -- search the report; --product matches invoice LINES,
  *                            so it answers "was this person ever invoiced?"
- *   npm run sb -- issue --template <id> --desc "..." --price 31525.00
+ *   npm run sb -- issue --template <id> --desc "..." --price 31525.00 [--vat "21 %"]
  *                       [--qty 1] [--term "60 de zile"] [--dry-run]
  *                         -- issue a NEW invoice off an existing one, changing
  *                            the line AND the price. The only path left since
@@ -520,7 +520,7 @@ async function runBrowser(outDir: string): Promise<boolean> {
     if (cmd === 'issue') {
       const opts = {
         template: need('template'), description: need('desc'), price: need('price'),
-        qty: flag('qty'), term: flag('term'), dryRun: has('dry-run'),
+        qty: flag('qty'), term: flag('term'), vat: flag('vat'), dryRun: has('dry-run'),
       };
       const { staged } = await issueFromTemplate(page, opts);
       if (opts.dryRun) { out({ dryRun: true, staged }); return true; }

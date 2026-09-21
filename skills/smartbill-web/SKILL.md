@@ -138,7 +138,7 @@ appear nowhere in the API.
 | `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
 | `sb -- list [--from dd/mm/yyyy --to dd/mm/yyyy] [--json]` | `number<TAB>id` for every invoice in a period (bare: the **current month**). **The only source of internal ids.** |
 | `sb -- find [--product X] [--client Y] [--from ..] [--to ..] [--details] [--json]` | search the report; `--product` matches invoice **lines**, `--details` prints each line |
-| `sb -- issue --template <id> --desc "..." --price 31525.00 [--qty 1] [--term "60 de zile"] [--dry-run]` | issue a **new** invoice off an existing one, changing the line **and** the price |
+| `sb -- issue --template <id> --desc "..." --price 31525.00 [--qty 1] [--term "60 de zile"] [--vat "21 %"] [--dry-run]` | issue a **new** invoice off an existing one, changing the line, the price **and the VAT rate** |
 | `sb -- finalize --id <id>` | turn the unnumbered draft `issue` leaves into an issued, numbered document |
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
@@ -170,6 +170,15 @@ npm run sb -- pdf --id 51466639 --out ~/Downloads --name S328.pdf
 and UM — then rewrites the line description **and the unit price**, and sets the
 payment term by its label (`"60 de zile"`), which is what moves the due date.
 `copy` cannot do the price, and that is usually the whole point of a new invoice.
+
+`--vat "21 %"` overrides the inherited VAT rate (`#edit_product_vat_code`; the
+labels are `21 %`, `11 %`, `19 %`, `9 %`, `5 %`, `0 % - Taxare inversa`,
+`0 % - TVA Inclus`, `0 % - SDD`, `0 % - SFDD`). Needed more often than it looks,
+because **templates carry a rate that belongs to their client, not to yours**:
+the whole EUR/P series is reverse-charged, so an EUR invoice to a private person
+— who has no VAT code to reverse-charge to — has no template to inherit from. A
+`--dry-run` prints `{net, vat, total}`, which is the one look that confirms the
+rate landed before a fiscal document exists.
 
 **Always `--dry-run` first.** It stops before saving and prints the staged line
 plus `{net, vat, total, due}` read off the form — one look confirms the VAT rate
@@ -228,6 +237,40 @@ Two details that are not optional:
 - **The template's `#client_brand` survives** an edit that ignores it, so the
   previous customer's trading name rides along. `newclient` clears it; `reclient`
   takes `--brand ''` for the same reason.
+
+**`client-data` alone is no longer a sufficient guard** (found 22 Sep 2026).
+`clean_client_modal()` empties the modal — `removeData('client-data')` plus its
+own inputs — but `#client_id` lives in the **invoice header**, outside the modal,
+so the template's client id survives the clean. `add_new_client(e)` takes `e.id`
+from there, and a non-empty id means *modify*: the POST went out as
+`{"id":"2318408","name":"Max Bahanets",...}`, which would have renamed **Rabobank**
+in the nomenclator and overwritten its VAT code, off-invoice where nobody looks.
+The old guard passed that payload happily. `addInvoiceClient` now clears
+`#client_id` and `#old_client_cif` itself and refuses unless both the modal data
+*and* `#client_id` are empty; a correct add reads `"id":""`. **When re-deriving
+this flow by hand, route `**/core/add_client/**` to abort** — a probe that saves
+is a probe that renames a real customer.
+
+**The modal will not save a client without CIF/CNP _and_ address _and_ city.**
+Measured, with the POST intercepted so nothing landed:
+
+| fields | result |
+|---|---|
+| name + country | blocked |
+| name + country + `Platitor TVA` | blocked |
+| name + address + city + country | blocked |
+| name + cif + country | blocked |
+| name + cif + city | blocked |
+| name + cif + address | blocked |
+| name + cif + address + city | **passes** |
+
+The refusal is **completely silent** — `add_new_client` is never reached, no
+notification fires, no field is marked, and the DOM does not change by a single
+class. The only symptom is `newclient` reporting "client modal stayed open".
+So `persoana_fizica` is not a field you can set either: there is no control for
+it, SmartBill infers it. An invoice to a **private individual** therefore cannot
+be issued from their name alone — collect a fiscal code (CNP, or the foreign
+equivalent), a street address and a city *before* creating the draft.
 
 Verification is the PDF, and it checks the **VAT code** as well as the name: a
 right name over the template's VAT code looks correct on screen and bills the

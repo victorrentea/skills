@@ -100,12 +100,19 @@ export async function addInvoiceClient(
   if (!cleaned) throw new Error('clean_client_modal() missing - SmartBill changed the issuing page');
   await page.waitForSelector(`${S_CLIENT.modalSave}:visible`, { timeout: 20_000 });
 
-  // Refuse to continue if the modal still carries an id: saving then would edit
-  // an existing customer rather than create one, and the damage is off-invoice.
+  /* `add_new_client(e)` branches on `e.id`, and that id comes from `#client_id`
+   * - which lives in the INVOICE header, not in the modal. clean_client_modal()
+   * only empties the modal (`removeData('client-data')` + its own inputs), so
+   * the template's client id survives the clean and the POST goes out as a
+   * MODIFY: the template's customer is renamed in the nomenclator and loses its
+   * VAT code, silently, off-invoice. Checking `client-data` alone stopped
+   * catching this - verified 22 Sep 2026, payload carried "id":"2318408"
+   * (Rabobank) after a clean that the old guard passed. */
+  await page.evaluate("$('#client_id').val(''); $('#old_client_cif').val('');");
   const carriesId = await page.evaluate<boolean>(
-    "!!$('#modal-emitere-add-client').data('client-data')"
+    "!!$('#modal-emitere-add-client').data('client-data') || !!$('#client_id').val()"
   );
-  if (carriesId) throw new Error('modal still carries client-data - it would MODIFY an existing client, not add one');
+  if (carriesId) throw new Error('invoice still carries a client id - saving would MODIFY an existing client, not add one');
 
   await page.fill(S_CLIENT.modalName, want.name);
   if (want.cif !== undefined) await page.fill(S_CLIENT.modalCif, want.cif);

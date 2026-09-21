@@ -339,6 +339,7 @@ export const ISSUE = {
   paymentTerm: '#payment_term_select',
   dueDay: '#due_day', dueMonth: '#due_month', dueYear: '#due_year',
   modalPrice: '#edit_product_price',
+  modalVat: '#edit_product_vat_code',      // "21 %", "0 % - Taxare inversa", ...
   modalApply: '#editBtn',                  // "Modifica produs"
 };
 
@@ -348,6 +349,7 @@ export interface IssueOpts {
   price: string;                 // net unit price, as typed into the form
   qty?: string;
   term?: string;                 // payment term label, e.g. "60 de zile"
+  vat?: string;                  // VAT option LABEL, e.g. "21 %"
   dryRun?: boolean;
 }
 
@@ -373,6 +375,15 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
   /* The modal recomputes VAT and total from the price on blur, not on input.
    * Applying without it saves the OLD total against the NEW price. */
   await price.press('Tab');
+  /* The VAT rate is inherited from the template, and templates are per-client:
+   * the EUR series is reverse-charged, so an EUR invoice to a private person -
+   * who has no VAT code to reverse-charge to - has no template to copy. Setting
+   * it here is the difference between a correct invoice and a storno.
+   * selectOption fires change, which is what makes the modal recompute. */
+  if (o.vat) {
+    await page.selectOption(ISSUE.modalVat, { label: o.vat });
+    await page.locator(ISSUE.modalVat).press('Tab');
+  }
   if (o.qty) await page.locator('#edit_product_quantity').fill(o.qty);
   await page.locator(ISSUE.modalApply).click();
   await name.waitFor({ state: 'hidden', timeout: 15_000 });
