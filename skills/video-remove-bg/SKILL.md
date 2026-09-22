@@ -57,8 +57,13 @@ Rerunning with the same `-o` resumes — matted frames are skipped.
   `format=duration` points past the last frame and the extraction returns nothing.
 - **ffmpeg ≥ 9 removed `-vsync`** → `-fps_mode passthrough`, or `select` duplicates/skips
   frames and the numbering stops matching.
-- **Fades.** Intros fade in/out: black frames give empty masks. Spot them by PNG size
-  (a black 1080p frame is <1 KB) or mean luma before matting.
+- **Fades.** A pure-black frame does NOT come back empty — BirefNet mattes it ~98%
+  opaque, so a fade-to-black tail ends the clip on a dark slab flashing over the
+  desktop. Blank those frames (source mean luma < ~3) after matting, and spot fades up
+  front by PNG size (a black 1080p frame is <1 KB) or mean luma.
+- **Trim flush after matting, not before.** Measure the alpha's lowest row over the
+  frames (ignoring the fade tail) and crop there — "cut 15%" by eye would have
+  clipped the feet by 6 px.
 - **`rembg p` processes files out of order** — don't read progress from the first name.
 - **Jittery mask? Measure before blaming the model.** `mean|Δalpha| / mean|Δsource|` < 1
   means the mask follows real motion (a cut, a fall). If one window flickers, pick the
