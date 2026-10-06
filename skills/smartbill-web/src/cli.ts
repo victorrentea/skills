@@ -26,11 +26,11 @@
  *   npm run sb -- list [--from 01/08/2026 --to 31/08/2026] [--json]
  *                         -- the ONLY way to enumerate documents. Bare, it shows
  *                            the CURRENT MONTH; --from/--to reach earlier ones.
- *   npm run sb -- find [--product "Vieira"] [--client Rabobank]
+ *   npm run sb -- find [--product "Doe"] [--client "Example Bank"]
  *                      [--from dd/mm/yyyy --to dd/mm/yyyy] [--details] [--json]
  *                         -- search the report; --product matches invoice LINES,
  *                            so it answers "was this person ever invoiced?"
- *   npm run sb -- issue --template <id> --desc "..." --price 31525.00 [--vat "21 %"]
+ *   npm run sb -- issue --template <id> --desc "..." --price 5000.00 [--vat "21 %"]
  *                       [--qty 1] [--term "60 de zile"] [--dry-run]
  *                         -- issue a NEW invoice off an existing one, changing
  *                            the line AND the price. The only path left since
@@ -306,7 +306,7 @@ async function runBrowser(outDir: string): Promise<boolean> {
        * Without it the split is not recoverable at all - see src/glovo.ts. */
       if (cmd === 'glovo-orders') {
         const g = await import('./glovo.js');
-        const orders = g.readOrders(flag('orders', 'data/glovo-orders.psv')!);
+        const orders = g.readOrders(flag('orders', sb.setting('SMARTBILL_GLOVO_ORDERS') ?? 'data/glovo-orders.psv')!);
         const [txs, exps] = await Promise.all([
           source(),
           acq.expenses(s, { from: flag('exp-from') ?? need('from'), to: flag('exp-to') ?? need('to') }),
@@ -318,7 +318,7 @@ async function runBrowser(outDir: string): Promise<boolean> {
           const { chromium } = await import('playwright');
           const b = await chromium.launch();
           const pg = await (await b.newContext()).newPage();
-          await pg.setContent(glovoPdfHtml(ms, { iban: flag('iban-label', 'RO65BTRLRONCRT0531322001')!, from: need('from'), to: need('to') }), { waitUntil: 'load' });
+          await pg.setContent(glovoPdfHtml(ms, { company: sb.setting('SMARTBILL_COMPANY_LABEL') ?? '', iban: flag('iban-label', sb.setting('SMARTBILL_IBAN_LABEL') ?? '')!, from: need('from'), to: need('to') }), { waitUntil: 'load' });
           await pg.pdf({ path: flag('pdf')!, format: 'A4', landscape: true, printBackground: true });
           await b.close();
           console.log(flag('pdf'));

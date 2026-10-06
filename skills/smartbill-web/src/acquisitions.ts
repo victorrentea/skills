@@ -50,7 +50,7 @@ async function post(s: Session, path: string, form: Record<string, string>, refe
 
 export interface Expense {
   docId: number;
-  doc: string;          // "Fact RIDPJ-0323019"
+  doc: string;          // "Fact ABCDE-0000001"
   number: string;
   supplier: string;
   cif: string;

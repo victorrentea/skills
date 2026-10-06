@@ -13,7 +13,7 @@ import type { OrderMatch } from './glovo.js';
 const esc = (s: string) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const lei = (n: number) => n.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function glovoPdfHtml(ms: OrderMatch[], meta: { iban: string; from: string; to: string }): string {
+export function glovoPdfHtml(ms: OrderMatch[], meta: { company: string; iban: string; from: string; to: string }): string {
   /* Chronological, the way an accountant reads a statement. */
   const key = (d: string) => d.split('/').reverse().join('');
   const dated = ms.filter(m => m.tx).sort((a, b) => key(a.tx!.date) < key(b.tx!.date) ? -1 : 1);
@@ -63,7 +63,7 @@ export function glovoPdfHtml(ms: OrderMatch[], meta: { iban: string; from: strin
   .miss table { width: auto } .miss td { background: #fdf6ea }
 </style>
 <h1>Plăți Glovo &rarr; facturi GLOVOAPPRO</h1>
-<p class="sub">VICTOR RENTEA CONSULTING S.R.L. &middot; cont ${esc(meta.iban)} &middot; ${esc(meta.from)} &ndash; ${esc(meta.to)} &middot; ${withFee.length} corelații</p>
+<p class="sub">${meta.company ? esc(meta.company) + ' &middot; ' : ''}${meta.iban ? 'cont ' + esc(meta.iban) + ' &middot; ' : ''}${esc(meta.from)} &ndash; ${esc(meta.to)} &middot; ${withFee.length} corelații</p>
 
 <div class="legend">
   <span class="li-e"><i></i>albastru = din extrasul de cont (ce s-a plătit)</span>
@@ -94,9 +94,7 @@ export function glovoPdfHtml(ms: OrderMatch[], meta: { iban: string; from: strin
 
 <p class="note">
 <b>Cum se citește:</b> factura GLOVOAPPRO acoperă doar taxele Glovo (livrare + service fee), deci coloana verde e mult mai mică decât suma plătită. Diferența este mâncarea, facturată separat de restaurant, plus bacșișul curierului, care nu e facturat de nimeni.<br>
-<b>Singura comandă documentată integral</b> este cea din 07/07/2026: 219,38 = <span class="ok">180,60</span> factura DV7653 de la Restaurante Trattoria Il Calcio SRL + 12,98 factura Glovo RIDPJ-0303978 + 25,80 bacșiș. Pentru restul comenzilor nu există factură de la restaurant în SPV.<br>
-<b>Corelarea</b> s-a făcut prin istoricul de comenzi din contul Glovo: totalul comenzii este exact suma debitată pe card, iar taxele din comandă sunt exact valoarea facturii GLOVOAPPRO.<br>
-<b>Aprilie 2026 lipsește</b> &mdash; nu există extras PDF pe contul RON pentru luna aceea.
+<b>Corelarea</b> s-a făcut prin istoricul de comenzi din contul Glovo: totalul comenzii este exact suma debitată pe card, iar taxele din comandă sunt exact valoarea facturii GLOVOAPPRO.
 </p>
 
 ${noFee.length ? `<div class="miss"><b>Plăți Glovo din extras fără factură GLOVOAPPRO corespondentă:</b>

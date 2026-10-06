@@ -5,3 +5,4 @@ smartbill.log
 package-lock.json
 smartbill.env
 *.env
+data/*.psv

@@ -76,7 +76,7 @@ async function openClientModal(page: Page) {
  * `add_new_client(e)` branches on `e.id`: empty means "add", anything else means
  * "modify". The id comes from the modal's `client-data`, which `clean_client_modal()`
  * removes - so cleaning first is the whole difference between creating
- * "Statens Jordbruksverk" and silently RENAMING the template's customer in the
+ * a new customer and silently RENAMING the template's customer in the
  * nomenclator, taking its VAT code with it.
  *
  * That is why `setInvoiceClient` must not be pointed at a template: it opens
@@ -106,8 +106,8 @@ export async function addInvoiceClient(
    * the template's client id survives the clean and the POST goes out as a
    * MODIFY: the template's customer is renamed in the nomenclator and loses its
    * VAT code, silently, off-invoice. Checking `client-data` alone stopped
-   * catching this - verified 22 Sep 2026, payload carried "id":"2318408"
-   * (Rabobank) after a clean that the old guard passed. */
+   * catching this - verified 22 Sep 2026, payload carried the template
+   * customer's id after a clean that the old guard passed. */
   await page.evaluate("$('#client_id').val(''); $('#old_client_cif').val('');");
   const carriesId = await page.evaluate<boolean>(
     "!!$('#modal-emitere-add-client').data('client-data') || !!$('#client_id').val()"

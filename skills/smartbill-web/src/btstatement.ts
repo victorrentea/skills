@@ -4,7 +4,7 @@
  * The reason this exists: SmartBill's own bank feed is a PSD2 connection that
  * expires (~90 days) and, when it does, the report simply shows no rows - so
  * `banktx` can return nothing for a month that plainly had payments. The monthly
- * PDF in ~/My Drive/Conta is the copy that never expires.
+ * PDF archived in your accounting folder is the copy that never expires.
  *
  * Extraction goes through `pdftotext -layout` (poppler), not a JS PDF library,
  * because the Debit/Credit distinction is CARRIED ONLY BY THE COLUMN POSITION of

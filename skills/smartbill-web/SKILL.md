@@ -138,7 +138,7 @@ appear nowhere in the API.
 | `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
 | `sb -- list [--from dd/mm/yyyy --to dd/mm/yyyy] [--json]` | `number<TAB>id` for every invoice in a period (bare: the **current month**). **The only source of internal ids.** |
 | `sb -- find [--product X] [--client Y] [--from ..] [--to ..] [--details] [--json]` | search the report; `--product` matches invoice **lines**, `--details` prints each line |
-| `sb -- issue --template <id> --desc "..." --price 31525.00 [--qty 1] [--term "60 de zile"] [--vat "21 %"] [--dry-run]` | issue a **new** invoice off an existing one, changing the line, the price **and the VAT rate** |
+| `sb -- issue --template <id> --desc "..." --price 5000.00 [--qty 1] [--term "60 de zile"] [--vat "21 %"] [--dry-run]` | issue a **new** invoice off an existing one, changing the line, the price **and the VAT rate** |
 | `sb -- finalize --id <id>` | turn the unnumbered draft `issue` leaves into an issued, numbered document |
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
@@ -158,12 +158,12 @@ Add `--headed` to watch it work. Progress is appended to `smartbill.log`.
 Two commands, because SmartBill's save is two steps:
 
 ```bash
-npm run sb -- issue --template 42899862 --term "60 de zile" --price 31525.00 \
-  --desc "AI Agentic Engineering Workshop, 31 aug - 1 sep 2026, PO 4200457254, PR621179" \
+npm run sb -- issue --template 10000000 --term "60 de zile" --price 5000.00 \
+  --desc "Onsite workshop, 1-2 Sep 2026, PO 4500000000" \
   --dry-run                                  # stage it, print the line and the totals
-npm run sb -- issue --template 42899862 ...  # without --dry-run: creates a DRAFT
-npm run sb -- finalize --id 51466639         # -> S328, status Emisa
-npm run sb -- pdf --id 51466639 --out ~/Downloads --name S328.pdf
+npm run sb -- issue --template 10000000 ...  # without --dry-run: creates a DRAFT
+npm run sb -- finalize --id 10000003         # -> S101, status Emisa
+npm run sb -- pdf --id 10000003 --out ~/Downloads --name S101.pdf
 ```
 
 `issue` copies a template invoice — inheriting client, series, currency, VAT rate
@@ -219,7 +219,7 @@ customer in the nomenclator* — renaming the template's client and overwriting 
 VAT code, damage that happens off-invoice where nobody looks.
 
 ```bash
-npm run sb -- newclient --id 52336147 --name "Foo Agency" --vat SE999999999901 \
+npm run sb -- newclient --id 10000004 --name "Foo Agency" --vat SE999999999901 \
   --regcom "999999-9999" --address "551 82 Town" --city Town --country Suedia \
   --email ap@foo.example --dry-run
 ```
@@ -243,7 +243,7 @@ Two details that are not optional:
 own inputs — but `#client_id` lives in the **invoice header**, outside the modal,
 so the template's client id survives the clean. `add_new_client(e)` takes `e.id`
 from there, and a non-empty id means *modify*: the POST went out as
-`{"id":"2318408","name":"Max Bahanets",...}`, which would have renamed **Rabobank**
+`{"id":"1234567","name":"New Customer",...}`, which would have renamed **the template's customer**
 in the nomenclator and overwritten its VAT code, off-invoice where nobody looks.
 The old guard passed that payload happily. `addInvoiceClient` now clears
 `#client_id` and `#old_client_cif` itself and refuses unless both the modal data
@@ -284,13 +284,13 @@ than none, because it throws *after* the write has landed.
 "Was this person ever invoiced?" is a report search, not 40 PDF downloads:
 
 ```bash
-npm run sb -- find --product "Vieira" --from 01/01/2025 --to 31/12/2026     # -> no documents match
-npm run sb -- find --client Rabobank --from 01/08/2026 --to 31/08/2026 --details
+npm run sb -- find --product "Doe" --from 01/01/2025 --to 31/12/2026     # -> no documents match
+npm run sb -- find --client "Example Bank" --from 01/08/2026 --to 31/08/2026 --details
 ```
 
 `--product` searches the **line text**, which on per-participant invoices carries
-the name and the order number (`Workshop … for employee Raduan Santos, order
-RAB-425752`). `--client` is the customer name. Zero rows is a real answer — the
+the name and the order number (`Workshop … for employee Alex Smith, order
+REF-000101`). `--client` is the customer name. Zero rows is a real answer — the
 command prints `no documents match` rather than waiting for one to appear.
 
 Three things about that page cost an afternoon each, and are why this is a
@@ -308,8 +308,8 @@ command rather than something to improvise:
 - **Column indexes shift.** Leading checkbox/icon cells move everything along, so
   rows are read *relative* to the cell holding the document link.
 
-**Always add a positive control.** `--product Vieira` returning nothing means
-"never invoiced" only if `--product Santos` returns his one invoice; without it
+**Always add a positive control.** `--product Doe` returning nothing means
+"never invoiced" only if `--product Smith` returns his one invoice; without it
 you cannot tell an empty result from a filter that silently did not apply.
 
 ## Cheltuieli si extras de cont
@@ -327,8 +327,8 @@ of ~6 s of page boot, and the rows arrive as data rather than as scraped cells.
 | `sb -- reconcile --from .. --to .. [--iban <id>] [--window 60] [--json]` | proposes (payment -> expense) pairs, scored |
 
 ```bash
-npm run sb -- ibans                       # 27842 LEI, 27843 EUR, 128690 USD, ...
-npm run sb -- reconcile --iban 27842 --from 01/02/2026 --to 31/05/2026
+npm run sb -- ibans                       # 10001 LEI, 10002 EUR, 10003 USD, ...
+npm run sb -- reconcile --iban 10001 --from 01/02/2026 --to 31/05/2026
 ```
 
 Endpoints, since they are nowhere in any documentation:
@@ -354,8 +354,8 @@ On top of that, 45 base + 35 if the supplier name appears in the statement text
 
 - **85–100** — amount *and* name (or number) agree. Safe to post.
 - **50** — amount and date only. Usually a card payment where the bank prints the
-  **trading name**, not the legal one: `PayU*eMAG.ro` for DANTE INTERNATIONAL SA,
-  `MALL DE PLANTE SI GHIVECE` for ROBERTOROSSI MALL S.R.L. Real matches, but a
+  **trading name**, not the legal one: a marketplace charge printed as `PayU*<shop>.ro`
+  while the expense carries the shop's legal SA/SRL name. Real matches, but a
   human has to say so.
 - `ambiguous: n` — n other expenses tie on the same score. Do not post those
   unattended; the amount alone cannot separate two invoices of the same value.
@@ -371,7 +371,7 @@ consimtamantul PSD2 a expirat:
 
 ```bash
 npm run sb -- reconcile --from 01/07/2026 --to 31/07/2026 --exp-from 01/05/2026 \
-  --statement "$HOME/My Drive/Conta/2026-07/Statements_RO65BTRLRONCRT0531322001_2026-07_VICTOR_RENTEA_CONSULTING_S_R_L.PDF"
+  --statement "<folder>/Statements_<IBAN>_2026-07_<COMPANY>.PDF"
 ```
 
 `--exp-from` largeste doar fereastra de cheltuieli: o plata din iulie stinge des o
@@ -413,7 +413,7 @@ potrivirea 1:1 din `reconcile`:
 ```bash
 npm run sb -- glovo --from 01/07/2026 --to 31/07/2026 \
   --exp-from 01/06/2026 --exp-to 15/09/2026 --before 5 --after 12 \
-  --statement "$HOME/My Drive/Conta/2026-07/Statements_RO65...PDF"
+  --statement "<folder>/Statements_<IBAN>_2026-07_<COMPANY>.PDF"
 ```
 
 `--platform` schimba regexul (implicit `glovo`), `--max-items` marimea cosului
@@ -431,8 +431,9 @@ Doua reguli care tin cautarea onesta:
   lei: sa nimeresti la un leu de orice tinta e practic garantat. Un rezultat
   „aproape" nu e o pista, e zgomot.
 
-Rulat pe iunie-august 2026, cu fereastra larga si cos de 3: **zero plati inchise
-exact**. Nu e un prag de reglat - vezi mai jos de ce.
+Pe date reale, cu fereastra larga si cos de 3, nu inchide exact aproape nicio plata
+Glovo. Nu e un prag de reglat: plata contine si parti pe care nu le factureaza
+nimeni - vezi `glovo-orders`.
 
 ### `glovo-orders` - singurul lucru care chiar inchide o plata Glovo
 
@@ -446,17 +447,20 @@ TOTAL = (PRODUCTS + DISCOUNT)                                  -> factura restau
       + COURIER_TIP                                            -> nicio factura, niciodata
 ```
 
-Verificat pe comanda `101703773550` (Trattoria IL CALCIO): `258.00 - 77.40 = 180.60`
-e exact factura din SPV `DV7653`, `2.99 + 9.99 = 12.98` e exact `RIDPJ-0303978`, iar
-`180.60 + 12.98 + 25.80 = 219.38` e exact plata cu cardul din 7 iulie. Cei 38.78 pe
-care niciun subset-sum nu-i explica erau factura de taxe plus bacsisul.
+Verificat pe o comanda reala: produse minus discount = exact factura restaurantului
+din SPV, livrare + service = exact factura GLOVOAPPRO, iar suma lor plus bacsisul =
+exact plata cu cardul. Diferenta pe care niciun subset-sum n-o explica era factura de
+taxe plus bacsisul.
 
 ```bash
 npm run sb -- glovo-orders --from 01/01/2026 --to 31/08/2026 \
   --exp-from 01/01/2026 --exp-to 15/09/2026 --statement "<extrase.pdf,...>"
 ```
 
-Comenzile se citesc din `data/glovo-orders.psv`; `--orders` schimba fisierul.
+Comenzile se citesc din `data/glovo-orders.psv` (git-ignored - e istoricul tau de
+comenzi, nu se comite), sau din `SMARTBILL_GLOVO_ORDERS` / `--orders <fisier>`.
+Antetul PDF-ului ia firma si contul din `SMARTBILL_COMPANY_LABEL` si
+`SMARTBILL_IBAN_LABEL` (env sau `~/.claude/smartbill.env`), sau din `--iban-label`.
 
 `--pdf <fisier>` scoate acelasi rezultat ca PDF pentru contabila. Layout-ul
 coloreaza **sursele**, nu randurile: albastru = ce vine din extras (plata), verde
@@ -476,55 +480,17 @@ conectorul Gmail vrea base64 inline, ceea ce nu are cum sa treaca prin conversat
   trebuie sa iasa niciodata in afara tabului.
 - **Comenzile nu au data** nicaieri in API. Data vine din extras: `TOTAL` e egal cu
   suma platii cu cardul, si asta ancoreaza comanda in timp.
-- `paymentMethodsBreakdown` spune **cu ce card** s-a platit (`terminația 8205` e
-  cardul firmei, acelasi `42448205` din extras), deci separa comenzile firmei de
-  cele personale.
+- `paymentMethodsBreakdown` spune **cu ce card** s-a platit (ultimele 4 cifre, aceleasi
+  ca in extras), deci separa comenzile firmei de cele personale.
 
-Rulat pe ianuarie-august 2026: din 102 comenzi, **43 se regasesc in extrasul RON**,
-**39 din 43 au factura de taxe** identificata exact - si **una singura are factura de
-la restaurant**.
+### Plata de platforma nu se cupleaza 1:1 cu facturile
 
-| | RON |
-|---|---|
-| platit cu cardul | 8.499,70 |
-| mancare | 7.048,31, din care **facturata 180,60** |
-| taxe Glovo | 676,29, din care facturate 641,32 |
-| bacsis curier | 686,57, nefacturabil |
-
-### Glovo nu se cupleaza 1:1, si nu e o problema de algoritm
-
-Verificat pe e-factura preluata din SPV (`/network/viewer/anaf/<extdocId>/`):
-factura GLOVOAPPRO contine **doar taxele Glovo** - `Taxa de livrare`,
-`Service fee`, `Taxa vreme rea`, `Taxa comanda minima`, plus discounturile lor.
-Mancarea nu apare nicaieri. Plata cu cardul, in schimb, e comanda intreaga.
-
-Iunie-august 2026: **39 de plati Glovo = 8,245.94 RON** fata de **46 de facturi
-GLOVOAPPRO = 798.27 RON**, adica 9.7%. Nicio suma de pe extras nu are cum sa fie
-egala cu o factura, deci `reconcile` le lasa necuplate **corect** - nu e nimic de
-reglat la scor sau la fereastra de zile.
-
-Nici pe data nu se rezolva: data facturii vine la ~2 zile dupa data EPOS a
-comenzii, dar numaratoarea pe zi nu se inchide (EPOS 22/07 are 3 comenzi, 24/07
-are 3 facturi, dar EPOS 29/07 are 3 si 31/07 are 4). Sunt mai multe facturi decat
-plati, deci pairing-ul pe comanda nu e reconstruibil din datele astea.
-
-Nici pe identificatori nu e nimic de legat, verificat in datele reale:
-
-| unde | ce contine |
-|---|---|
-| textul tranzactiei | `Glovo BUCURESTI RO`, `TID:99999999`, terminal `498750000260290` - identic la toate. Doar RRN, suma si data EPOS |
-| factura GLOVOAPPRO | doar liniile de taxe. Niciun numar de comanda |
-| factura restaurantului | doar produsele (`Pizza Suprema`, `Eco Taxa`, `Discount`). Niciun numar de comanda |
-
-Deci nu exista cheie comuna: raman suma si data, iar sumele nu se inchid. (BT a
-tiparit candva un cod de comerciant - `Glovo 16APR BULFS41GR` in aprilie 2026 -
-dar pana in iulie disparuse.)
-
-Ce ramane e o decizie de contabilitate, nu de automatizare: fie se sparge fiecare
-plata Glovo intre factura de taxe si restul (mancare, fara factura de la
-restaurant), fie facturile de taxe se marcheaza platite cu data decontarii si
-restul se inregistreaza separat. Diferenta - ~7,450 RON pe trei luni - nu are
-factura in SmartBill deloc.
+Platile cu cardul catre o platforma de livrare nu corespund 1:1 facturilor: factura
+platformei acopera doar taxele ei, mancarea e facturata (sau nu) de restaurant, iar
+bacsisul de nimeni. `reconcile` le lasa necuplate **corect** - nu e nimic de reglat
+la scor sau la fereastra de zile. Se reconciliaza pe platforma, prin `glovo-orders`,
+iar restul e o decizie de contabilitate. Notele lui Victor despre cazul lui (cifre,
+analiza) sunt in repo-ul lui privat de skill-uri.
 
 ### Two preconditions that silently make reconciliation impossible
 
@@ -586,7 +552,7 @@ rather than working through the other twenty-four.
 
 ```bash
 npm run sb -- reclient --series P --from 210 --to 234 \
-  --name 'New Name B.V.' --address 'T.a.v. Dept\nStreet 18\n1234 AB' --city 'Utrecht' \
+  --name 'New Name B.V.' --address 'T.a.v. Dept\nExample Street 1\n1234 AB' --city 'Amsterdam' \
   --out ./out --csv names.csv        # names.csv: number,filename
 ```
 
@@ -709,7 +675,7 @@ verified, after `copy` could not manage one.
 
 When comparing a line against the PDF, **squeeze whitespace on both sides**. The
 PDF wraps long lines and extraction turns the break into a space, so
-`RAB-425628` reads back as `RAB- 425628` and a strict equality check fails on a
+`REF-000123` reads back as `REF- 000123` and a strict equality check fails on a
 perfectly good invoice.
 
 ### Why bulk issuing stayed on the browser (historical)
@@ -787,10 +753,10 @@ input events through CDP, so `waitForEvent('download')` works.
   fail validation in SPV days later, when the fix is a storno. Target **≤100
   characters**; put anything extra in the BT-154 description field
   (`[name="edit_product_description"]`), not in the name.
-  A real one, corrected on 20 Sep 2026 before it was sent:
-  `Serviciu de instruire curs AI-Assisted Coding | Perioada: 7-8.09.2026 | Contract: KL676, Anexa 4 | 6.000,00 EUR x curs BNR 5,2644 lei/EUR`
-  is **137 chars**; `Instruire AI-Assisted Coding 7-8.09.2026, contract KL676 anexa 4, 6000 EUR x 5,2644`
-  is 83 and carries the same facts. This only bites domestic (S-series) invoices,
+  For example,
+  `Serviciu de instruire curs Java Avansat | Perioada: 7-8.09.2026 | Contract: AB123, Anexa 4 | 6.000,00 EUR x curs BNR 5,0000 lei/EUR`
+  is **131 chars**; `Instruire Java Avansat 7-8.09.2026, contract AB123 anexa 4, 6000 EUR x 5,0000`
+  is 77 and carries the same facts. This only bites domestic (S-series) invoices,
   which are the ones that go to SPV.
 - Invoice numbers go in **as printed**, leading zeros included — `0159`, not `159`
   on accounts that pad. An unpadded number comes back as "not found".

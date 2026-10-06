@@ -196,7 +196,7 @@ export async function lineText(page: Page, id: string | number): Promise<string>
     await new Promise(r => setTimeout(r, 250));
   }
   /* Squeeze whitespace before matching: the viewer wraps long lines, so
-   * "RAB-425628" comes back as "RAB- 425628" and a strict match misses. */
+   * "REF-000123" comes back as "REF- 000123" and a strict match misses. */
   const m = txt.match(/(?:Workshop|Training|Curs|One-day|Consultanta|Consulting)[^|]{0,240}?(?=\s+buc\b|\s+Exchange rate)/i);
   return (m ? m[0] : txt.slice(0, 200)).trim();
 }

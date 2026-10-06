@@ -23,7 +23,7 @@ export interface Creds { username: string; token: string; cif: string }
  * Token from ~/.claude/smartbill.env, overridable by the environment.
  * Never inline the token in a command — it ends up in shell history and logs.
  */
-export function creds(): Creds {
+function credsFile(): Record<string, string> {
   const file: Record<string, string> = {};
   if (existsSync(CREDS)) {
     for (const line of readFileSync(CREDS, 'utf8').split(/\r?\n/)) {
@@ -31,6 +31,16 @@ export function creds(): Creds {
       if (m) file[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
     }
   }
+  return file;
+}
+
+/** One setting: the environment first, then ~/.claude/smartbill.env. */
+export function setting(k: string): string | undefined {
+  return process.env[k] || credsFile()[k] || undefined;
+}
+
+export function creds(): Creds {
+  const file = credsFile();
   const pick = (k: string) => process.env[k] || file[k];
   const username = pick('SMARTBILL_USERNAME');
   const token = pick('SMARTBILL_TOKEN');
