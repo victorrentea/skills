@@ -15,7 +15,6 @@ Then restart Claude Code (or `/plugin` → reload) and the skills below become a
 
 | Skill | What it does |
 |---|---|
-| `grill-me` | `/grill-me`: interviews you about a plan one question at a time, each with a recommended answer, until you share an understanding. Facts it looks up itself; decisions it asks you. |
 | `db` | Blocks any index/migration/query advice until the real schema has been inspected. No recommendations from memory. |
 | `jmeter` | Turns "hit this endpoint with 50 threads" into a JMX test plan and opens it in the JMeter GUI. |
 | `tooltips` | Rules for adding or restyling hover hints in a web UI — fires even on a bare `title=` attribute. |
