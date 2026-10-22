@@ -91,6 +91,10 @@ export async function autoLogin(opts: { headless?: boolean } = {}): Promise<void
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await ctx.newPage();
     await page.goto(`${BASE}/auth/login/`, { waitUntil: 'domcontentloaded' });
+    // A fresh context has no OneTrust consent cookie, and its overlay would
+    // intercept every click of every later run that reuses this session.
+    const consent = page.locator('#onetrust-accept-btn-handler');
+    await consent.click({ timeout: 10_000 }).catch(() => {});
     await page.fill('#id_username', cred.user);
     await page.fill('#id_password', cred.pass);
     await page.click('#cloud_login_btn');
