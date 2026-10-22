@@ -58,8 +58,21 @@ pass the token on the command line; it would land in shell history.
 
 ```bash
 npm install && npx playwright install chromium
-npm run sb -- login          # log in manually; cookies saved to storageState.json
+npm run sb -- login          # headless, with the Keychain password; cookies saved to storageState.json
+npm run sb -- login --manual # by hand, in a window
 ```
+
+`login` reads the credentials from the macOS Keychain, so an agent can log back
+in on its own when the session dies. Store them once, by hand (`-w` with no
+value prompts for the password, so it never lands in shell history or a chat):
+
+```bash
+security add-generic-password -s cloud.smartbill.ro -a <email> -w
+```
+
+The email is read back from the Keychain item; set `SMARTBILL_ACCOUNT` only if
+several are stored. If the form does not let it through (captcha, 2FA), `login`
+fails with the page text and `--manual` is the way in.
 
 `storageState.json` is gitignored.
 
@@ -134,7 +147,7 @@ appear nowhere in the API.
 
 | Command | What it does |
 |---|---|
-| `sb -- login` | interactive login, saves cookies |
+| `sb -- login [--manual]` | log in with the Keychain password (or by hand), saves cookies |
 | `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
 | `sb -- list [--from dd/mm/yyyy --to dd/mm/yyyy] [--json]` | `number<TAB>id` for every invoice in a period (bare: the **current month**). **The only source of internal ids.** |
 | `sb -- find [--product X] [--client Y] [--from ..] [--to ..] [--details] [--json]` | search the report; `--product` matches invoice **lines**, `--details` prints each line |

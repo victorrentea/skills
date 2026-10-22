@@ -21,7 +21,7 @@
  *
  * BROWSER commands (Playwright on cloud.smartbill.ro, need `login` first) -
  * these do what the API cannot:
- *   npm run sb -- login
+ *   npm run sb -- login [--manual] [--headed]  -- Keychain password, or by hand
  *   npm run sb -- touch [--state f] [--no-save]  -- keep the saved session from ageing out
  *   npm run sb -- list [--from 01/08/2026 --to 31/08/2026] [--json]
  *                         -- the ONLY way to enumerate documents. Bare, it shows
@@ -210,11 +210,11 @@ async function runBrowser(outDir: string): Promise<boolean> {
   // Check before importing, so an unknown command prints usage rather than
   // "no saved session" from open().
   if (!BROWSER_CMDS.includes(cmd)) return false;
-  const { open, login, jitter } = await import('./session.js');
+  const { open, login, autoLogin, jitter } = await import('./session.js');
   const { list, report, lineText, issueFromTemplate, finalizeDraft, createFromTemplate, editDescription, downloadPdf, pdfBytes, url, S } = await import('./invoices.js');
   const { setInvoiceClient, addInvoiceClient, pickInvoiceClient } = await import('./clients.js');
 
-  if (cmd === 'login') { await login(); return true; }
+  if (cmd === 'login') { await (has('manual') ? login() : autoLogin({ headless: !has('headed') })); return true; }
 
   /* Django rolls a session forward on each request when SESSION_SAVE_EVERY_REQUEST
    * is on, so a periodic authenticated hit keeps `login` from ageing out. Re-saving
