@@ -39,7 +39,7 @@
  *   npm run sb -- edit --csv edits.csv --out ./out
  *   npm run sb -- pdf  --id 10000001 --out ./out [--name INV101.pdf]
  *   npm run sb -- rmdraft --id <id>   delete an UNNUMBERED draft from the report
- *   npm run sb -- inspect --id <id> [--page edit|view|report] [--js "<expr>"]
+ *   npm run sb -- inspect --id <id> [--page edit|view|copy|report] [--js "<expr>"]
  *                         read-only: dump a document's page, for when SmartBill
  *                         moves a selector and something stops matching
  *   npm run sb -- reclient --name "New Ltd" [--address "line1\nline2"] [--city X]
@@ -495,6 +495,7 @@ async function runBrowser(outDir: string): Promise<boolean> {
     if (cmd === 'inspect') {
       const id = flag('id') ?? '';
       const target = flag('page') === 'view' ? url.view(id)
+                   : flag('page') === 'copy' ? url.copy(id)
                    : flag('page') === 'report' ? url.report
                    : url.edit(id);
       await page.goto(target, { waitUntil: 'domcontentloaded' });

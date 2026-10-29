@@ -385,6 +385,17 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
     await page.locator(ISSUE.modalVat).press('Tab');
   }
   if (o.qty) await page.locator('#edit_product_quantity').fill(o.qty);
+  /* A line can be priced in another currency than the invoice: some
+   * templates carry e.g. 6000 EUR on a RON invoice, converted at the day's BNR rate
+   * (#edit_product_rate). The row then shows the converted price, not the typed
+   * one, so read the rate while the modal is still open. */
+  const rate = await page.evaluate<number>(
+    `(function(){ var c = document.querySelector('#edit_product_currency');
+       var r = document.querySelector('#edit_product_rate');
+       var inv = document.querySelector('#currency');
+       if (!c || !r || !inv || c.value === inv.value) return 1;
+       return Number(String(r.value).replace(',', '.')) || 1; })()`
+  );
   await page.locator(ISSUE.modalApply).click();
   await name.waitFor({ state: 'hidden', timeout: 15_000 });
 
@@ -401,11 +412,11 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
    * so a literal substring check fails on a line that is perfectly correct -
    * and a false failure here is dangerous: the natural response is to re-run,
    * which issues the same invoice twice. */
-  const wantPrice = Number(String(o.price).replace(/\s/g, '').replace(',', '.'));
+  const wantPrice = Math.round(Number(String(o.price).replace(/\s/g, '').replace(',', '.')) * rate * 100) / 100;
   const onRow = (row.match(/\d[\d.,]*/g) ?? [])
     .map(n => Number(n.replace(/\s/g, '').replace(/,(\d{1,2})$/, '.$1').replace(/,/g, '')));
   if (!Number.isFinite(wantPrice) || !onRow.some(n => Math.abs(n - wantPrice) < 0.005)) {
-    throw new Error(`line did not take the price ${o.price}: ${row}`);
+    throw new Error(`line did not take the price ${o.price}${rate !== 1 ? ` x ${rate} = ${wantPrice}` : ''}: ${row}`);
   }
 
   const totals = await page.evaluate<string>(

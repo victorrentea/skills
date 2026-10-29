@@ -193,6 +193,11 @@ the whole EUR/P series is reverse-charged, so an EUR invoice to a private person
 `--dry-run` prints `{net, vat, total}`, which is the one look that confirms the
 rate landed before a fiscal document exists.
 
+**`--price` is in the LINE's currency, not the invoice's.** A RON invoice whose
+template line is priced in EUR (`#edit_product_currency`) takes `--price 6000`,
+and SmartBill converts at the day's BNR rate (`#edit_product_rate`): the row and
+the totals then show lei. Typing the lei amount converts it a second time.
+
 **Always `--dry-run` first.** It stops before saving and prints the staged line
 plus `{net, vat, total, due}` read off the form — one look confirms the VAT rate
 and the due date before a fiscal document exists.
