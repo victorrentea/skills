@@ -113,6 +113,30 @@ an invoice already marked paid comes back as `alreadyPaid` untouched.
 Pick the value date from the payment advice, not from the day the email arrived -
 those differ, and the advice is what the client's books show.
 
+**While the API is off, use `payweb`** — the same job through the web app's own
+*Incaseaza factura* modal, keyed by the internal id (from `find --json`/`list`):
+
+```bash
+npm run sb -- payweb --id 10000001 --date 05/10/2026 --iban RO00BANKEURCRT0000000001 --dry-run
+npm run sb -- payweb --id 10000001 --date 05/10/2026 --iban RO00BANKEURCRT0000000001
+```
+
+`--date` is the **value date from the bank statement**, and it is not cosmetic: on a
+foreign-currency invoice the page re-fetches `/core/exchange_rate_at_date/` when
+the date changes, so the rate becomes that day's BNR rate — the same figure the
+bank prints as the RON equivalent. Left at today, every EUR receipt is booked at
+the wrong rate. `--iban` picks the bank account (the modal only offers accounts in
+the invoice's currency); `--type` defaults to `p` (Ordin plata); `--value`
+defaults to what is still unpaid and is refused if larger. The result is re-read
+from `/documente/suma_restanta/`, the endpoint the modal itself uses, and the
+command exits non-zero unless the remaining amount dropped by exactly the value.
+
+**SmartBill throttles the view page.** After ~10 invoice views in a few minutes,
+`/raport/factura/<id>/` answers `403 Forbidden` for every id while the session is
+still alive (`touch` says `alive: true`, the report page still loads). It shows up
+as `waiting for locator('#incaseazaLnk')` timing out. Space batches out instead of
+retrying in a loop.
+
 ### Reading a document is a PDF operation
 
 Issue date, client, line items and **currency** exist only inside the PDF — no
@@ -157,6 +181,7 @@ appear nowhere in the API.
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |
 | `sb -- pdf --id <id> --out ./out [--name INV101.pdf]` | re-download one PDF by internal id |
 | `sb -- rmdraft --id <id>` | delete an **unnumbered draft** through the row menu; refuses anything issued |
+| `sb -- payweb --id <id> --date dd/mm/yyyy [--iban ..] [--value ..] [--type p] [--dry-run]` | record a receipt through the *Incaseaza* modal, at the BNR rate of the value date — see *Recording a payment* |
 | `sb -- inspect --id <id> [--page edit\|view\|report] [--js expr]` | read-only dump, for when SmartBill moves a selector |
 | `sb -- reclient --name X [--vat ..] [--regcom ..] [--address ..] [--city ..] [--brand ''] (--ids .. \| --series S --from 1 --to 9)` | rewrite the **customer** on invoices already issued; verifies name **and VAT code** in every PDF afterwards |
 | `sb -- newclient --id <id> --name X --vat .. [--regcom ..] [--address ..] [--city ..] [--country ..] [--email ..] [--dry-run]` | point a **draft** at a newly created customer, instead of editing the template's one |

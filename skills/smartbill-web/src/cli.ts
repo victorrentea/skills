@@ -39,6 +39,8 @@
  *   npm run sb -- edit --csv edits.csv --out ./out
  *   npm run sb -- pdf  --id 10000001 --out ./out [--name INV101.pdf]
  *   npm run sb -- rmdraft --id <id>   delete an UNNUMBERED draft from the report
+ *   npm run sb -- payweb --id <id> --date dd/mm/yyyy [--iban RO..] [--value 123.45] [--type p] [--dry-run]
+ *                         record a receipt via the Incaseaza modal (API `pay` is off)
  *   npm run sb -- inspect --id <id> [--page edit|view|copy|report] [--js "<expr>"]
  *                         read-only: dump a document's page, for when SmartBill
  *                         moves a selector and something stops matching
@@ -203,7 +205,7 @@ async function runApi(outDir: string): Promise<boolean> {
  * Browser commands. Playwright is imported lazily so the API path stays *
  * fast and works even without `npx playwright install`.                 *
  * ------------------------------------------------------------------ */
-const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'newclient', 'pickclient', 'setterm', 'touch', 'inspect', 'rmdraft',
+const BROWSER_CMDS = ['login', 'list', 'find', 'issue', 'finalize', 'pdf', 'copy', 'edit', 'reclient', 'newclient', 'pickclient', 'setterm', 'touch', 'inspect', 'rmdraft', 'payweb',
   'expenses', 'banktx', 'ibans', 'reconcile', 'glovo', 'glovo-orders'];
 
 async function runBrowser(outDir: string): Promise<boolean> {
@@ -632,6 +634,89 @@ async function runBrowser(outDir: string): Promise<boolean> {
       const { text } = await pdfText(await pdfBytes(page, id));
       const printed = (text.replace(/\s+/g, ' ').match(/Termen plata:?\s*([0-9\/.]+)/i) ?? [])[1];
       log(`setterm ${id} -> "${term}"; form due ${due}; PDF says ${printed ?? '(not found)'}`);
+      return true;
+    }
+
+    /* Record money received against an invoice, through the web app's own
+     * "Incaseaza factura" modal - the browser twin of the API `pay`, which is
+     * dead on this subscription.
+     *
+     * The modal is opened by calling the page's own `pay_invoice(...)` (the
+     * onclick of the hidden #incaseazaLnk), so the remaining amount, currency
+     * and client id are SmartBill's, not ours. Setting the DATE matters beyond
+     * the books: on a foreign-currency invoice the page re-fetches
+     * `/core/exchange_rate_at_date/` on change, so the rate becomes the BNR rate
+     * of the value date (5.3447 on 05/10/2026 - the same figure BT prints as
+     * "CURS ... ECHIVALENT LEI" on the statement). Leave it at today and every
+     * EUR receipt is booked at the wrong rate.
+     *
+     * Ground truth afterwards is `/documente/suma_restanta/`, the endpoint the
+     * modal itself uses to compute what is still unpaid. */
+    if (cmd === 'payweb') {
+      const id = need('id');
+      const [dd, mm, yyyy] = need('date').split('/');     // dd/mm/yyyy, the value date
+      const type = flag('type', 'p')!;                   // p = Ordin plata
+      const iban = flag('iban');
+      const dry = has('dry-run');
+      const remaining = async () => Number((await page.evaluate<any>(
+        `$.ajax({url:'/documente/suma_restanta/',type:'POST',dataType:'json',cache:false,data:{invoice_id:${JSON.stringify(id)}}})`
+      )).remaining_sum);
+
+      await page.goto(url.view(id), { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#incaseazaLnk', { state: 'attached', timeout: 30_000 });
+      const before = await remaining();
+      const value = Number(flag('value') ?? before);
+      if (before <= 0) { out({ id, alreadyPaid: true, remaining: before }); return true; }
+      if (value > before + 0.005) throw new Error(`value ${value} exceeds the ${before} still unpaid on ${id}`);
+
+      const onclick = (await page.getAttribute('#incaseazaLnk', 'onclick'))!.replace(/return false;?/, '');
+      await page.evaluate(onclick);
+      await page.waitForFunction(`!!document.querySelector('#modal_incasare_factura') && document.querySelector('#modal_incasare_factura').offsetHeight > 0 && $('#payment_value').val() !== ''`, null, { timeout: 30_000 });
+      await page.evaluate(`$('#payment_type').easyDropDown('select', ${JSON.stringify(type)}); $('#payment_type').trigger('change')`);
+      await page.waitForTimeout(800);
+      const rateReq = page.waitForResponse(r => r.url().includes('/core/exchange_rate_at_date/'), { timeout: 8_000 }).catch(() => null);
+      await page.evaluate(`$('#payment_year').val(${JSON.stringify(yyyy)}).trigger('change').trigger('blur');
+        $('#payment_month').val(${JSON.stringify(mm)}).trigger('change').trigger('blur');
+        $('#payment_day').val(${JSON.stringify(dd)}).trigger('change').trigger('blur');`);
+      await rateReq;
+      await page.waitForTimeout(800);
+      await page.evaluate(`$('#payment_value').val(${JSON.stringify(value.toFixed(2))}).trigger('change').trigger('blur')`);
+      if (iban) {
+        const opt = await page.evaluate<string>(`($('#payment_bankaccount option').filter((i,o)=>$(o).data('iban')===${JSON.stringify(iban)}).val())||''`);
+        if (!opt) throw new Error(`no bank account with IBAN ${iban} offered for this invoice's currency`);
+        await page.evaluate(`$('#payment_bankaccount').easyDropDown('select', ${JSON.stringify(opt)}); $('#payment_bankaccount').trigger('change')`);
+      }
+      const staged = await page.evaluate<any>(`({type:$('#payment_type').val(), date:[$('#payment_day').val(),$('#payment_month').val(),$('#payment_year').val()].join('/'),
+        value:$('#payment_value').val(), currency:$('#payment_currency').text().trim(), rate:$('#exchange_rate_div').is(':visible')?$('#exchange_rate').val():null,
+        bank:$('#payment_bankaccount option:selected').data('iban')||null})`);
+      if (staged.date !== `${dd}/${mm}/${yyyy}`) throw new Error(`date did not stick: ${JSON.stringify(staged)}`);
+      if (dry) { out({ id, dryRun: true, remaining: before, staged }); return true; }
+
+      await page.click('#payBtn');
+      /* A warning (future date, cash limit) comes back as an in-page YesNoDialog;
+       * anything we did not expect is reported, never clicked through. */
+      const done = await Promise.race([
+        page.waitForResponse(r => r.request().method() === 'POST' && /\/incasari\//.test(r.url()) && !/tip_incasare/.test(r.url()), { timeout: 30_000 }).then(r => `saved via ${new URL(r.url()).pathname}`),
+        page.waitForSelector('.ask_dialog:visible, .alert_dialog:visible', { timeout: 30_000 }).then(async e => `dialog: ${(await e.innerText()).replace(/\s+/g, ' ').slice(0, 300)}`),
+      ]).catch(e => `no response: ${e.message}`);
+      await page.waitForTimeout(2_000);
+      /* Log BEFORE verifying. On 2 Nov 2026 the save of P257 landed, then the
+       * throttle (see SKILL.md) turned the verification POST into a 403 page,
+       * $.ajax threw, and the run ended with no output and no log line - a real
+       * receipt that looked exactly like "never ran". Re-running it would have
+       * been refused only because the remaining amount was already 0. */
+      log(`payweb ${id} ${staged.date} ${staged.value} ${staged.currency} rate ${staged.rate ?? '-'} -> ${done}`);
+      const after = await remaining().catch(e => {
+        out({ id, staged, result: done, verified: false, error: String(e).slice(0, 200),
+              hint: 'the save may have landed - check suma_restanta before re-running' });
+        process.exitCode = 2;
+        return null;
+      });
+      if (after === null) return true;
+      const settled = Math.abs(after - (before - value)) < 0.01;
+      out({ id, staged, result: done, remainingBefore: before, remainingAfter: after, settled });
+      log(`payweb ${id} ${staged.date} ${staged.value} ${staged.currency} rate ${staged.rate ?? '-'} -> remaining ${after}`);
+      if (!settled) process.exitCode = 1;
       return true;
     }
 
