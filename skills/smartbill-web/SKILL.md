@@ -175,7 +175,7 @@ appear nowhere in the API.
 | `sb -- touch` | hit an authenticated page and re-save the session; keeps `login` from ageing out |
 | `sb -- list [--from dd/mm/yyyy --to dd/mm/yyyy] [--json]` | `number<TAB>id` for every invoice in a period (bare: the **current month**). **The only source of internal ids.** |
 | `sb -- find [--product X] [--client Y] [--from ..] [--to ..] [--details] [--json]` | search the report; `--product` matches invoice **lines**, `--details` prints each line |
-| `sb -- issue --template <id> --desc "..." --price 5000.00 [--qty 1] [--term "60 de zile"] [--vat "21 %"] [--dry-run]` | issue a **new** invoice off an existing one, changing the line, the price **and the VAT rate** |
+| `sb -- issue --template <id> --desc "..." --price 5000.00 [--qty 1] [--term "60 de zile"] [--vat "21 %"] [--mentions "..."] [--note "..."] [--dry-run]` | issue a **new** invoice off an existing one, changing the line, the price **and the VAT rate** |
 | `sb -- finalize --id <id>` | turn the unnumbered draft `issue` leaves into an issued, numbered document |
 | `sb -- copy --template <id> --csv rows.csv --out ./out` | copies a template invoice once per CSV row, swaps the line description, issues it, downloads the PDF |
 | `sb -- edit --csv edits.csv --out ./out` | rewrites the line description of existing invoices and re-downloads their PDFs |

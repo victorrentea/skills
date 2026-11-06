@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 export const S = {
   editPencil: 'a.emitere_edit',                    // pencil on invoice line 1
   modalName: '[name="edit_product_name"]',         // "Denumire" in Modificare produs
-  modalDesc: '[name="edit_product_description"]',  // "Descriere (BT-154)"
+  modalDesc: '#edit_product_description',          // "Descriere (BT-154)", has no name attribute
   modalSubmit: 'button:visible:has-text("Modifica produs")',
   saveInvoice: '#saveInvoiceBtn',                  // "Salvati Factura"
   invoiceLink: 'a[href^="/raport/factura/"]',
@@ -201,17 +201,33 @@ export async function lineText(page: Page, id: string | number): Promise<string>
   return (m ? m[0] : txt.slice(0, 200)).trim();
 }
 
+/** "Descriere (BT-154)" is printed under the line and copied from the template. The row text
+ *  the other checks read does not contain it, hence the check on the span itself: S342
+ *  (6 Nov 2026) went out with a 2025 course on it, past a clean dry-run. */
+const LINE_NOTE = 'span.break-all';
+async function setLineNote(page: Page, note = '') {
+  const desc = page.locator(S.modalDesc).first();
+  if (!(await desc.count())) return;
+  await desc.fill(note);
+  await desc.press('Tab');
+}
+async function assertLineNote(page: Page, note = '') {
+  const shown = (await page.locator(LINE_NOTE).allInnerTexts()).map(t => t.trim()).filter(Boolean);
+  const ok = note ? shown.length === 1 && shown[0].startsWith(note.slice(0, 30)) : !shown.length;
+  if (!ok) throw new Error(`line description is ${JSON.stringify(shown)}, wanted ${JSON.stringify(note)}`);
+}
+
 /** Replace the description of line 1. Assumes the invoice form page is open. */
-async function setLineDescription(page: Page, description: string) {
+async function setLineDescription(page: Page, description: string, note?: string) {
   await page.waitForSelector(S.editPencil, { timeout: 30_000 });
   await page.click(S.editPencil);
   const name = page.locator(S.modalName);
   await name.waitFor({ state: 'visible', timeout: 15_000 });
   await name.fill(description);
-  const desc = page.locator(S.modalDesc);
-  if (await desc.count()) await desc.first().fill('');   // never leave a stray BT-154
+  await setLineNote(page, note);                         // never leave a stray BT-154
   await page.locator(S.modalSubmit).first().click();
   await name.waitFor({ state: 'hidden', timeout: 15_000 });
+  await assertLineNote(page, note);
   /* The line row must now carry the new text - fail loud if it does not, rather
    * than save an invoice whose description never took.
    *
@@ -316,10 +332,10 @@ export async function createFromTemplate(
 
 /** Rewrite the line description of an existing invoice and re-save it. */
 export async function editDescription(
-  page: Page, invoiceId: string | number, description: string
+  page: Page, invoiceId: string | number, description: string, note?: string
 ): Promise<void> {
   await page.goto(url.edit(invoiceId), { waitUntil: 'domcontentloaded' });
-  await setLineDescription(page, description);
+  await setLineDescription(page, description, note);
   await jitter();
   await saveDocument(page);
 }
@@ -350,6 +366,8 @@ export interface IssueOpts {
   qty?: string;
   term?: string;                 // payment term label, e.g. "60 de zile"
   vat?: string;                  // VAT option LABEL, e.g. "21 %"
+  mentions?: string;             // replaces the template's "Mentiuni" text; '' clears it
+  note?: string;                 // "Descriere (BT-154)", printed under the line
   dryRun?: boolean;
 }
 
@@ -364,12 +382,15 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
     await page.selectOption(ISSUE.paymentTerm, { label: o.term });
   }
 
+  /* #mentions is printed on the PDF and is copied from the template like everything
+   * else, so a template written for one course carries its names onto the next. */
+  if (o.mentions !== undefined) await page.locator('textarea[name="mentions"]').fill(o.mentions);
+
   await page.click(S.editPencil);
   const name = page.locator(S.modalName);
   await name.waitFor({ state: 'visible', timeout: 15_000 });
   await name.fill(o.description);
-  const desc = page.locator(S.modalDesc);
-  if (await desc.count()) await desc.first().fill('');    // never leave a stray BT-154
+  await setLineNote(page, o.note);                        // never leave a stray BT-154
   const price = page.locator(ISSUE.modalPrice);
   await price.fill(o.price);
   /* The modal recomputes VAT and total from the price on blur, not on input.
@@ -398,6 +419,7 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
   );
   await page.locator(ISSUE.modalApply).click();
   await name.waitFor({ state: 'hidden', timeout: 15_000 });
+  await assertLineNote(page, o.note);
 
   /* Verify against the LINE ROW, before saving: the modal is reset once closed,
    * so reading it back would report blanks for a change that did land. */
@@ -420,7 +442,8 @@ export async function issueFromTemplate(page: Page, o: IssueOpts): Promise<{ sta
   }
 
   const totals = await page.evaluate<string>(
-    `JSON.stringify({ net: (document.querySelector('#total_value_input')||{}).value,
+    `JSON.stringify({ mentions: (document.querySelector('textarea[name="mentions"]')||{}).value,
+                      net: (document.querySelector('#total_value_input')||{}).value,
                       vat: (document.querySelector('#total_vat_input')||{}).value,
                       total: (document.querySelector('#total_input')||{}).value,
                       due: [(document.querySelector('#due_day')||{}).value,
